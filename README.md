@@ -3,7 +3,7 @@
 </p>
 
 # Opie Plugin Library
-Plugins with a Windows setup window that installs or removes the set you choose.
+Plugins with a Windows setup window that installs or removes the set you choose. Built by [Opra Dev Team](https://github.com/Opra-Dev-Team).
 
 Each plugin is its own jar. The client loads them from your local plugin folder the next time it starts. The jars in `dist/` are already built, so installing does not require a JDK.
 

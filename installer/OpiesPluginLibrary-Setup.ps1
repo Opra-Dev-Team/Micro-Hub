@@ -57,6 +57,9 @@ $script:LauncherDir = Join-Path $env:LOCALAPPDATA 'OpiesPluginLibrary'
 $script:UpdateNoticeShown = $false
 $script:PendingUpdateApplied = $false
 $script:RunScriptUri = 'https://raw.githubusercontent.com/opesoid/opies-plugin-hut/dev/installer/run.ps1'
+$script:TeamName = 'Opra Dev Team'
+$script:TeamGitHubUri = 'https://github.com/Opra-Dev-Team'
+$script:MicrobotDownloadUri = 'https://microbot.cloud/'
 
 $script:PluginBlurbs = @{
     'OpiesBankSorterPlugin.jar' = 'Sorts the bank into an iron 8-tab layout.'
@@ -260,6 +263,24 @@ function Test-DesktopShortcut {
 
 function Get-InstallerIconSource {
     return (Join-Path $ScriptDir 'opes-plugin-hut.ico')
+}
+
+function Start-BrandUri([string] $uri) {
+    if ([string]::IsNullOrWhiteSpace($uri)) { return }
+    Start-Process $uri | Out-Null
+}
+
+function New-BrandLink([string] $text, [string] $uri) {
+    $link = New-Object System.Windows.Forms.Label
+    $link.Text = $text
+    $link.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9)
+    $link.ForeColor = $script:ColorAccent
+    $link.BackColor = $script:ColorBg
+    $link.AutoSize = $true
+    $link.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $target = $uri
+    $link.Add_Click({ Start-BrandUri $target }.GetNewClosure())
+    return $link
 }
 
 function Open-UnlockedStream([string] $path) {
@@ -799,7 +820,7 @@ function Update-LibraryLayout($form) {
     if ($null -eq $form -or $null -eq $form.Tag -or $null -eq $form.Tag.List) { return }
     $w = $form.ClientSize.Width
     $h = $form.ClientSize.Height
-    $headerH = 108
+    $headerH = 120
     $bannerH = 0
     if ($form.Tag.Warning.Visible) { $bannerH = 40 }
     $toolbarH = 32
@@ -809,6 +830,10 @@ function Update-LibraryLayout($form) {
     $footerH = 64
 
     $form.Tag.Header.SetBounds(0, 0, $w, $headerH)
+    if ($null -ne $form.Tag.GitHubLink) {
+        $form.Tag.GitHubLink.Location = New-Object System.Drawing.Point(210, 86)
+        $form.Tag.MicrobotLink.Location = New-Object System.Drawing.Point(($form.Tag.GitHubLink.Right + 16), 86)
+    }
     $form.Tag.Warning.SetBounds(0, $headerH, $w, $bannerH)
     $y = $headerH + $bannerH + 8
     $form.Tag.SelectAll.Location = New-Object System.Drawing.Point(28, ($y + 2))
@@ -890,6 +915,18 @@ function New-LibraryForm {
     $subtitle.AutoSize = $false
     $subtitle.Size = New-Object System.Drawing.Size(640, 22)
     $subtitle.Location = New-Object System.Drawing.Point(82, 62)
+
+    $teamLabel = New-Object System.Windows.Forms.Label
+    $teamLabel.Text = $script:TeamName
+    $teamLabel.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9)
+    $teamLabel.ForeColor = $script:ColorMuted
+    $teamLabel.BackColor = $script:ColorBg
+    $teamLabel.AutoSize = $true
+    $teamLabel.Location = New-Object System.Drawing.Point(82, 86)
+
+    $githubLink = New-BrandLink 'GitHub' $script:TeamGitHubUri
+    $githubLink.Location = New-Object System.Drawing.Point(210, 86)
+    $microbotLink = New-BrandLink 'Get Microbot' $script:MicrobotDownloadUri
 
     $selectAll = New-Object System.Windows.Forms.Label
     $selectAll.Text = 'Select all'
@@ -1005,6 +1042,9 @@ function New-LibraryForm {
         MarkImage = $markImage
         MarkStream = $markStream
         IconStream = $iconStream
+        TeamLabel = $teamLabel
+        GitHubLink = $githubLink
+        MicrobotLink = $microbotLink
     }
 
     $selectAll.Add_Click({
@@ -1107,7 +1147,7 @@ function New-LibraryForm {
         Update-PluginCardStatus $form
     }.GetNewClosure())
 
-    $header.Controls.AddRange(@($mark, $title, $subtitle))
+    $header.Controls.AddRange(@($mark, $title, $subtitle, $teamLabel, $githubLink, $microbotLink))
     $form.Controls.AddRange(@(
         $header, $warning, $selectAll, $clearSelection, $list, $statusLine, $detailsLink, $log,
         $shortcutLink, $uninstallButton, $closeButton, $installButton
