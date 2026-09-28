@@ -1,4 +1,5 @@
 OpiesBankSorterPlugin.jar
 OpiesEclipseRedPlugin.jar
+OpiesFlaxPickerPlugin.jar
 OpiesMoltenGlassPlugin.jar
 OpiesSandBuyerPlugin.jar

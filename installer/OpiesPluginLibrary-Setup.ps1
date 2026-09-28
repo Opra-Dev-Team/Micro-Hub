@@ -63,6 +63,7 @@ $script:PluginBlurbs = @{
     'OpiesSandBuyerPlugin.jar' = 'Buys sand and soda ash in Catherby, then hops.'
     'OpiesEclipseRedPlugin.jar' = 'Collects Eclipse red at the Hunter Guild.'
     'OpiesMoltenGlassPlugin.jar' = 'Smelts molten glass at the Edgeville furnace.'
+    'OpiesFlaxPickerPlugin.jar' = 'Picks flax at Nemus Retreat and can spin it.'
 }
 
 function Get-LibraryJarNames {
