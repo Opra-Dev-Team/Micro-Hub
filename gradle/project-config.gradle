@@ -1,4 +1,4 @@
-// JDK and client lookup for the Opie plugin library.
+// JDK and client lookup for Micro Hub.
 
 project.ext.TARGET_JDK_VERSION = 11
 project.ext.JDK_VENDOR = 'ADOPTIUM'

@@ -158,7 +158,7 @@ afterEvaluate {
             manifest {
                 attributes(
                     'Implementation-Title': plugin.name,
-                    'Built-By': 'opies-plugin-hut',
+                    'Built-By': 'micro-hub',
                     'Created-By': 'Gradle Shadow Plugin'
                 )
                 attributes.remove('Build-Jdk-Spec')

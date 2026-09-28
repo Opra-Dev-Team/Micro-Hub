@@ -1,5 +1,5 @@
-OpiesBankSorterPlugin.jar
-OpiesEclipseRedPlugin.jar
-OpiesFlaxPickerPlugin.jar
-OpiesMoltenGlassPlugin.jar
-OpiesSandBuyerPlugin.jar
+BankSorterPlugin.jar
+EclipseRedPlugin.jar
+FlaxPickerPlugin.jar
+MoltenGlassPlugin.jar
+SandBuyerPlugin.jar
