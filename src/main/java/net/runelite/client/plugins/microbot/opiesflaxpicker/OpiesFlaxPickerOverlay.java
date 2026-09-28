@@ -44,7 +44,7 @@ public class OpiesFlaxPickerOverlay extends OverlayPanel {
                     .build());
             panelComponent.getChildren().add(LineComponent.builder()
                     .left("Status")
-                    .right(Microbot.status)
+                    .right(plainStatus(Microbot.status))
                     .rightColor(Color.GREEN)
                     .build());
             panelComponent.getChildren().add(LineComponent.builder()
@@ -77,5 +77,25 @@ public class OpiesFlaxPickerOverlay extends OverlayPanel {
             Microbot.log(ex.getMessage());
         }
         return super.render(graphics);
+    }
+
+    static String plainStatus(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "-";
+        }
+        String text = raw.replaceAll("<[^>]*>", "");
+        text = text.replace('\u00a0', ' ').replaceAll("\\s+", " ").trim();
+        text = text.replaceAll("([a-z])([A-Z])", "$1 $2");
+        int space = text.indexOf(' ');
+        if (space > 0) {
+            String first = text.substring(0, space);
+            String second = text.substring(space + 1);
+            int secondSpace = second.indexOf(' ');
+            String secondWord = secondSpace < 0 ? second : second.substring(0, secondSpace);
+            if (first.equalsIgnoreCase(secondWord)) {
+                text = second;
+            }
+        }
+        return text.isEmpty() ? "-" : text;
     }
 }
