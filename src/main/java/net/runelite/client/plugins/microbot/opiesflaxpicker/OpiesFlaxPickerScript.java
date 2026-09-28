@@ -34,7 +34,10 @@ public class OpiesFlaxPickerScript extends Script {
     private static final int FIELD_RANGE = 25;
     private static final int WHEEL_RANGE = 8;
     private static final long PICK_IDLE_MS = 3_500L;
+    private static final long FAST_IDLE_MS = 2_200L;
+    private static final long SPAM_STALL_MS = 1_800L;
     private static final long PLANT_GONE_GRACE_MS = 1_200L;
+    private static final long SPAM_GONE_GRACE_MS = 250L;
     private static final long DEPLETED_SKIP_MS = 10_000L;
     private static final long SPIN_TIMEOUT_MS = 90_000L;
     private static final int SPIN_OPTION_MISSES = 5;
@@ -51,6 +54,9 @@ public class OpiesFlaxPickerScript extends Script {
     private int flaxAtClick;
     private long lastFlaxGainMs;
     private boolean awaitingYield;
+    private long lastPickClickMs;
+    private long nextPickGapMs;
+    private long lastSlowTickMs;
     private WorldPoint depletedTile;
     private long depletedUntilMs;
 
@@ -82,6 +88,13 @@ public class OpiesFlaxPickerScript extends Script {
                     return;
                 }
                 routeStart();
+                long now = System.currentTimeMillis();
+                if (state != State.PICK && now - lastSlowTickMs < 200) {
+                    return;
+                }
+                if (state != State.PICK) {
+                    lastSlowTickMs = now;
+                }
                 switch (state) {
                     case BANK:
                         bank(config);
@@ -102,7 +115,7 @@ public class OpiesFlaxPickerScript extends Script {
                 }
                 Microbot.logStackTrace(getClass().getSimpleName(), ex);
             }
-        }, 0, 200, TimeUnit.MILLISECONDS);
+        }, 0, 50, TimeUnit.MILLISECONDS);
 
         return true;
     }
@@ -192,6 +205,7 @@ public class OpiesFlaxPickerScript extends Script {
         }
 
         int flax = Rs2Inventory.count(FLAX_ID);
+        PickSpeed speed = config.pickSpeed();
         if (currentPlant != null) {
             if (flax > flaxAtClick) {
                 flaxAtClick = flax;
@@ -203,26 +217,35 @@ public class OpiesFlaxPickerScript extends Script {
                 return;
             }
             Rs2TileObjectModel stillThere = findFlaxAt(currentPlant);
+            long now = System.currentTimeMillis();
+            long sinceClick = now - lastPickClickMs;
+            long sinceYield = now - lastFlaxGainMs;
             boolean busy = Rs2Player.isMoving() || Rs2Player.isAnimating() || Rs2Player.isInteracting();
-            long sinceClick = System.currentTimeMillis() - lastFlaxGainMs;
-            if (stillThere == null && !Rs2Player.isMoving() && sinceClick > PLANT_GONE_GRACE_MS) {
+            long goneGrace = speed == PickSpeed.SPAM ? SPAM_GONE_GRACE_MS : PLANT_GONE_GRACE_MS;
+            if (stillThere == null && !Rs2Player.isMoving() && sinceClick > goneGrace) {
                 Microbot.status = "Flax depleted, next plant";
                 markDepleted(currentPlant);
                 currentPlant = null;
                 return;
             }
-            if (busy) {
+            if (speed == PickSpeed.SPAM && sinceYield > SPAM_STALL_MS && lastPickClickMs > 0) {
+                Microbot.status = "Flax depleted, next plant";
+                markDepleted(currentPlant);
+                currentPlant = null;
+                return;
+            }
+            if (speed != PickSpeed.SPAM && busy) {
                 Microbot.status = "Picking flax";
                 return;
             }
-            if (awaitingYield && sinceClick > PICK_IDLE_MS) {
+            if (speed != PickSpeed.SPAM && awaitingYield && sinceClick > idleMs(speed)) {
                 Microbot.status = "Flax depleted, next plant";
                 markDepleted(currentPlant);
                 currentPlant = null;
                 return;
             }
-            if (stillThere != null && sinceClick > 600L) {
-                clickFlax(stillThere, flax);
+            if (stillThere != null && pickClickReady()) {
+                clickFlax(stillThere, flax, speed);
             }
             return;
         }
@@ -235,17 +258,44 @@ public class OpiesFlaxPickerScript extends Script {
         if (Rs2Player.isMoving()) {
             return;
         }
-        clickFlax(next, flax);
+        clickFlax(next, flax, config.pickSpeed());
     }
 
-    private void clickFlax(Rs2TileObjectModel plant, int flaxNow) {
+    private void clickFlax(Rs2TileObjectModel plant, int flaxNow, PickSpeed speed) {
         Microbot.status = "Picking flax";
-        Rs2Antiban.actionCooldown();
+        if (speed == PickSpeed.NORMAL) {
+            Rs2Antiban.actionCooldown();
+        }
         plant.click("Pick");
         currentPlant = plant.getWorldLocation();
         flaxAtClick = flaxNow;
-        lastFlaxGainMs = System.currentTimeMillis();
+        lastPickClickMs = System.currentTimeMillis();
+        if (lastFlaxGainMs == 0) {
+            lastFlaxGainMs = lastPickClickMs;
+        }
         awaitingYield = true;
+        nextPickGapMs = gapFor(speed);
+    }
+
+    private boolean pickClickReady() {
+        return System.currentTimeMillis() - lastPickClickMs >= nextPickGapMs;
+    }
+
+    private long gapFor(PickSpeed speed) {
+        if (speed == PickSpeed.SPAM) {
+            return 50;
+        }
+        if (speed == PickSpeed.FAST) {
+            return Rs2Random.betweenInclusive(250, 400);
+        }
+        return Rs2Random.betweenInclusive(700, 1100);
+    }
+
+    private long idleMs(PickSpeed speed) {
+        if (speed == PickSpeed.FAST) {
+            return FAST_IDLE_MS;
+        }
+        return PICK_IDLE_MS;
     }
 
     private void leaveField(OpiesFlaxPickerConfig config) {
@@ -505,6 +555,8 @@ public class OpiesFlaxPickerScript extends Script {
         flaxAtClick = 0;
         lastFlaxGainMs = 0;
         awaitingYield = false;
+        lastPickClickMs = 0;
+        nextPickGapMs = 0;
         depletedTile = null;
         depletedUntilMs = 0;
     }

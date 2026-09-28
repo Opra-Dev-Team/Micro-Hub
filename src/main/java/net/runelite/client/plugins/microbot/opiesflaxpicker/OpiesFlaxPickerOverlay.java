@@ -55,6 +55,10 @@ public class OpiesFlaxPickerOverlay extends OverlayPanel {
                     .left("Mode")
                     .right(mode == null ? "-" : mode.toString())
                     .build());
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Pick speed")
+                    .right(config.pickSpeed() == null ? "-" : config.pickSpeed().toString())
+                    .build());
 
             int stopAfter = config.stopAfter();
             String banked = stopAfter > 0

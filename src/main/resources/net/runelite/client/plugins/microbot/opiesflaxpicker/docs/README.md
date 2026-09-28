@@ -13,6 +13,7 @@ Anything already in the inventory is banked first so all 28 slots are free.
 ## Config
 
 - **Mode**: Pick flax only, Bow strings, or Linen yarn.
+- **Pick speed**: Spam pick, Fast click, or Normal click. Spam pick hits the same plant until it is depleted.
 - **Stop after**: session cap on banked flax, bow strings, or linen yarn, depending on the mode. `0` means no limit.
 - **Bank PIN**: optional 4-digit PIN.
 - **Hide overlay**: hide the stats panel.
