@@ -262,6 +262,14 @@ function Get-InstallerIconSource {
     return (Join-Path $ScriptDir 'opes-plugin-hut.ico')
 }
 
+function Open-UnlockedStream([string] $path) {
+    $bytes = [System.IO.File]::ReadAllBytes($path)
+    $stream = New-Object System.IO.MemoryStream
+    $stream.Write($bytes, 0, $bytes.Length)
+    $stream.Position = 0
+    return $stream
+}
+
 function Install-ShortcutIcon {
     $source = Get-InstallerIconSource
     if (-not (Test-Path -LiteralPath $source)) {
@@ -841,9 +849,11 @@ function New-LibraryForm {
     $form.ForeColor = $script:ColorText
     $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
     $form.ShowInTaskbar = $true
+    $iconStream = $null
     $iconPath = Get-InstallerIconSource
     if (Test-Path -LiteralPath $iconPath) {
-        $form.Icon = New-Object System.Drawing.Icon $iconPath
+        $iconStream = Open-UnlockedStream $iconPath
+        $form.Icon = New-Object System.Drawing.Icon $iconStream
     }
     Set-ControlBuffered $form
 
@@ -856,9 +866,11 @@ function New-LibraryForm {
     $mark.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
     $mark.BackColor = $script:ColorBg
     $markImage = $null
+    $markStream = $null
     $markPath = Join-Path $ScriptDir 'opes-plugin-hut.png'
     if (Test-Path -LiteralPath $markPath) {
-        $markImage = [System.Drawing.Image]::FromFile($markPath)
+        $markStream = Open-UnlockedStream $markPath
+        $markImage = [System.Drawing.Image]::FromStream($markStream)
         $mark.Image = $markImage
     }
 
@@ -991,6 +1003,8 @@ function New-LibraryForm {
         Log = $log
         DetailsOpen = $false
         MarkImage = $markImage
+        MarkStream = $markStream
+        IconStream = $iconStream
     }
 
     $selectAll.Add_Click({
@@ -1127,7 +1141,9 @@ function New-LibraryForm {
         $timer.Stop()
         $timer.Dispose()
         if ($null -ne $form.Icon) { $form.Icon.Dispose() }
+        if ($null -ne $form.Tag.IconStream) { $form.Tag.IconStream.Dispose() }
         if ($null -ne $form.Tag.MarkImage) { $form.Tag.MarkImage.Dispose() }
+        if ($null -ne $form.Tag.MarkStream) { $form.Tag.MarkStream.Dispose() }
     }.GetNewClosure())
 
     return $form
