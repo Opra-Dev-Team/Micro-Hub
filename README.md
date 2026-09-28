@@ -20,3 +20,15 @@ OP is lime and RA is red. That `[Opra]` prefix is how these plugins show up in t
 ```powershell
 irm https://raw.githubusercontent.com/Opra-Dev-Team/Micro-Hub/dev/installer/run.ps1 | iex
 ```
+
+## Setup window
+
+The window lists each plugin and whether it is already installed. Check the ones you want, then use **Install selected**. Close the game client first so the jars can be replaced. When it finishes, restart the client and enable the plugins you want.
+
+<p align="center">
+  <img src="installer/screenshot.png" alt="Micro Hub setup window showing the plugin list and Install selected button" width="720">
+</p>
+
+---
+
+**Disclaimer:** AI was used in the making of this project.
