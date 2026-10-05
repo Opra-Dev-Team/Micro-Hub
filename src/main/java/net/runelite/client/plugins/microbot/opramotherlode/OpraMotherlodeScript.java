@@ -1,4 +1,4 @@
-package net.runelite.client.plugins.microbot.motherloadmine;
+package net.runelite.client.plugins.microbot.opramotherlode;
 
 import java.awt.Rectangle;
 import java.util.ArrayList;
@@ -29,9 +29,9 @@ import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.api.player.Rs2PlayerCache;
 import net.runelite.client.plugins.microbot.api.tileobject.Rs2TileObjectCache;
 import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
-import net.runelite.client.plugins.microbot.motherloadmine.enums.MLMMiningSpot;
-import net.runelite.client.plugins.microbot.motherloadmine.enums.MLMStatus;
-import net.runelite.client.plugins.microbot.motherloadmine.enums.Pickaxe;
+import net.runelite.client.plugins.microbot.opramotherlode.enums.MLMMiningSpot;
+import net.runelite.client.plugins.microbot.opramotherlode.enums.MLMStatus;
+import net.runelite.client.plugins.microbot.opramotherlode.enums.Pickaxe;
 import net.runelite.client.plugins.microbot.util.Rs2InventorySetup;
 import net.runelite.client.plugins.microbot.util.antiban.AntibanPlugin;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2Antiban;
@@ -53,7 +53,7 @@ import net.runelite.client.plugins.microbot.util.tile.Rs2Tile;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 
 @Slf4j
-public class MotherloadMineScript extends Script
+public class OpraMotherlodeScript extends Script
 {
 
     private static final int SPOT_VEIN_RADIUS = 2;
@@ -80,8 +80,8 @@ public class MotherloadMineScript extends Script
     private int maxSackSize;
 	private List<String> itemsToKeep;
 
-	private final MotherloadMinePlugin plugin;
-    private final MotherloadMineConfig config;
+	private final OpraMotherlodePlugin plugin;
+    private final OpraMotherlodeConfig config;
     private final Rs2TileObjectCache rs2TileObjectCache;
     private final Rs2PlayerCache rs2PlayerCache;
 
@@ -97,7 +97,7 @@ public class MotherloadMineScript extends Script
     private MLMStatus lastLoggedStatus = null;
 
 	@Inject
-	public MotherloadMineScript(MotherloadMinePlugin plugin, MotherloadMineConfig config, Rs2TileObjectCache rs2TileObjectCache, Rs2PlayerCache rs2PlayerCache)
+	public OpraMotherlodeScript(OpraMotherlodePlugin plugin, OpraMotherlodeConfig config, Rs2TileObjectCache rs2TileObjectCache, Rs2PlayerCache rs2PlayerCache)
 	{
 		this.plugin = plugin;
 		this.config = config;
@@ -107,7 +107,7 @@ public class MotherloadMineScript extends Script
 
     public boolean run()
     {
-        log.info("Starting MotherloadMine script");
+        log.info("Starting OpraMotherlode script");
         initialize();
         mainScheduledFuture = scheduledExecutorService.scheduleWithFixedDelay(this::executeTaskSafely, 0, 600, TimeUnit.MILLISECONDS);
         return true;
@@ -211,6 +211,11 @@ public class MotherloadMineScript extends Script
             return;
         }
 
+        if (config.fixWaterwheel() && shouldRepairWaterwheel) {
+            status = MLMStatus.FIXING_WATERWHEEL;
+            return;
+        }
+
         if (config.dropGems() && hasGemsInInventory()) {
             status = MLMStatus.DROP_GEMS;
             return;
@@ -224,11 +229,6 @@ public class MotherloadMineScript extends Script
 
         if (payDirtCount() > 0 && Rs2Inventory.isFull()) {
             resetMiningState();
-            boolean lastDeposit = currentSackCount() + payDirtCount() >= SACK_SIZE;
-            if (lastDeposit && config.fixWaterwheel() && getBrokenStrutCount() > 1) {
-                status = MLMStatus.FIXING_WATERWHEEL;
-                return;
-            }
             status = MLMStatus.DEPOSIT_HOPPER;
             return;
         }
@@ -454,20 +454,36 @@ public class MotherloadMineScript extends Script
         log.info("Fixing waterwheel workflow started");
         ensureLowerFloor();
 
+        if (getBrokenStrutCount() == 0) {
+            shouldRepairWaterwheel = false;
+            log.info("Waterwheel has no broken struts");
+            return;
+        }
+
 		if (!hasHammer()) {
 			if (!obtainHammer()) return;
 		}
 
-		if (rs2TileObjectCache.query().interact(ObjectID.MOTHERLODE_WHEEL_STRUT_BROKEN))
-		{
-			// We use a modified version of waitForXpDrop to ensure we break out of the sleep if the strut is repaired
-			final int skillExp = Microbot.getClientThread().invoke(() -> Microbot.getClient().getSkillExperience(Skill.SMITHING));
-			sleepUntilTrue(() -> skillExp != Microbot.getClientThread().invoke(() -> Microbot.getClient().getSkillExperience(Skill.SMITHING)) || getBrokenStrutCount() <= 1, 250, 20_000);
+        while (isRunning() && getBrokenStrutCount() > 0) {
+            int brokenBefore = getBrokenStrutCount();
+            if (!rs2TileObjectCache.query().interact(ObjectID.MOTHERLODE_WHEEL_STRUT_BROKEN)) {
+                log.debug("Broken strut click failed, retrying next loop");
+                return;
+            }
 
+			final int skillExp = Microbot.getClientThread().invoke(() -> Microbot.getClient().getSkillExperience(Skill.SMITHING));
+			sleepUntilTrue(() -> skillExp != Microbot.getClientThread().invoke(() -> Microbot.getClient().getSkillExperience(Skill.SMITHING)) || getBrokenStrutCount() < brokenBefore, 250, 20_000);
+            if (getBrokenStrutCount() >= brokenBefore) {
+                log.debug("Strut repair made no progress, retrying next loop");
+                return;
+            }
+        }
+
+        if (getBrokenStrutCount() == 0) {
 			dropHammerIfNeeded();
 			shouldRepairWaterwheel = false;
             log.info("Waterwheel repair complete");
-		}
+        }
     }
 
     private void depositHopper()
@@ -498,7 +514,9 @@ public class MotherloadMineScript extends Script
             log.debug("Depositing pay-dirt into hopper");
             sleepUntil(() -> payDirtCount() != paydirtToDeposit && !Rs2Player.isAnimating(), 10_000);
 
-			shouldRepairWaterwheel = true;
+            if (config.fixWaterwheel() && payDirtCount() != paydirtToDeposit) {
+                shouldRepairWaterwheel = true;
+            }
 
             // Calculate the effective sack size after deposit as VarbitID.MOTHERLODE_SACK_TRANSMIT takes time to update
             final int currentSackAmount = currentSackCount();

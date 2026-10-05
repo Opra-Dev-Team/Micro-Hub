@@ -1,4 +1,4 @@
-package net.runelite.client.plugins.microbot.motherloadmine;
+package net.runelite.client.plugins.microbot.opramotherlode;
 
 import com.google.inject.Provides;
 import java.awt.AWTException;
@@ -20,47 +20,47 @@ import net.runelite.client.ui.overlay.OverlayManager;
 	description = "Mines paydirt in the Motherlode Mine",
 	tags = {"paydirt", "mine", "motherlode", "mlm", "opra"},
 	authors = {"Opra Dev Team"},
-	version = MotherloadMinePlugin.version,
+	version = OpraMotherlodePlugin.version,
 	minClientVersion = "1.9.8",
 	enabledByDefault = PluginConstants.DEFAULT_ENABLED,
 	isExternal = PluginConstants.IS_EXTERNAL
 )
-public class MotherloadMinePlugin extends Plugin {
+public class OpraMotherlodePlugin extends Plugin {
 
-	public static final String version = "1.0.0";
+	public static final String version = "1.1.0";
 
     @Inject
-    private MotherloadMineConfig config;
+    private OpraMotherlodeConfig config;
     @Inject
     private OverlayManager overlayManager;
 
     @Inject
-    private MotherloadMineOverlay motherloadMineOverlay;
+    private OpraMotherlodeOverlay motherloadMineOverlay;
     @Inject
-    private MotherloadMineScript motherloadMineScript;
+    private OpraMotherlodeScript motherloadMineScript;
 
 	@Getter
 	private List<WorldPoint> blacklistedCrates = new ArrayList<>();
 
     @Provides
-	MotherloadMineConfig provideConfig(ConfigManager configManager) {
-        return configManager.getConfig(MotherloadMineConfig.class);
+	OpraMotherlodeConfig provideConfig(ConfigManager configManager) {
+        return configManager.getConfig(OpraMotherlodeConfig.class);
     }
 
     @Override
     protected void startUp() throws AWTException {
-		log.info("Starting MotherloadMine plugin v{}", version);
+		log.info("Starting OpraMotherlode plugin v{}", version);
         overlayManager.add(motherloadMineOverlay);
         motherloadMineScript.run();
-		log.info("MotherloadMine startup complete");
+		log.info("OpraMotherlode startup complete");
     }
 
     @Override
     public void shutDown() {
-		log.info("Starting MotherloadMine shutdown");
+		log.info("Starting OpraMotherlode shutdown");
         motherloadMineScript.shutdown();
         overlayManager.remove(motherloadMineOverlay);
 		blacklistedCrates.clear();
-		log.info("MotherloadMine shutdown complete");
+		log.info("OpraMotherlode shutdown complete");
     }
 }

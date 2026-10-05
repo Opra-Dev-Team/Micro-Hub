@@ -1,4 +1,4 @@
-package net.runelite.client.plugins.microbot.motherloadmine;
+package net.runelite.client.plugins.microbot.opramotherlode;
 
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
@@ -6,17 +6,17 @@ import net.runelite.client.config.ConfigInformation;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigSection;
 import net.runelite.client.plugins.microbot.inventorysetups.InventorySetup;
-import net.runelite.client.plugins.microbot.motherloadmine.enums.MLMMiningSpotList;
+import net.runelite.client.plugins.microbot.opramotherlode.enums.MLMMiningSpotList;
 
-@ConfigGroup(MotherloadMineConfig.configGroup)
+@ConfigGroup(OpraMotherlodeConfig.configGroup)
 @ConfigInformation(
 	"• This plugin will automate mining in motherload mine <br />" +
 	"• If using deposit all feature, <b>ensure you lock the slots you wish to keep in inventory</b> <br />" +
 	"• Start near the bank chest in motherload mine <br />"
 )
-public interface MotherloadMineConfig extends Config
+public interface OpraMotherlodeConfig extends Config
 {
-	String configGroup = "micro-motherloadmine";
+	String configGroup = "opra-motherlode";
 
 	String useInventorySetup = "useInventorySetup";
 	String inventorySetup = "inventory-setup";
@@ -132,7 +132,7 @@ public interface MotherloadMineConfig extends Config
 	@ConfigItem(
 		keyName = fixWaterwheel,
 		name = "Fix Water Wheel",
-		description = "Repair the wheel only when depositing pay-dirt into the hopper",
+		description = "Repair broken struts after each hopper deposit",
 		position = 2,
 		section = featureSection
 	)

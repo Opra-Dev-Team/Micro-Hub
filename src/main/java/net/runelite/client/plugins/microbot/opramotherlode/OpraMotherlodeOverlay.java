@@ -1,11 +1,11 @@
-package net.runelite.client.plugins.microbot.motherloadmine;
+package net.runelite.client.plugins.microbot.opramotherlode;
 
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.client.plugins.microbot.motherloadmine.enums.MLMMiningSpot;
+import net.runelite.client.plugins.microbot.opramotherlode.enums.MLMMiningSpot;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2Antiban;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2AntibanSettings;
 import net.runelite.client.ui.overlay.OverlayPanel;
@@ -14,15 +14,15 @@ import net.runelite.client.ui.overlay.components.LineComponent;
 import net.runelite.client.ui.overlay.components.TitleComponent;
 
 @Slf4j
-public class MotherloadMineOverlay extends OverlayPanel {
+public class OpraMotherlodeOverlay extends OverlayPanel {
     @Inject
-    MotherloadMineOverlay(MotherloadMinePlugin plugin) {
+    OpraMotherlodeOverlay(OpraMotherlodePlugin plugin) {
         super(plugin);
         setPosition(OverlayPosition.TOP_LEFT);
         setSnappable(true);
     }
 
-    @Inject private MotherloadMineScript script;
+    @Inject private OpraMotherlodeScript script;
 
     @Override
     public Dimension render(Graphics2D graphics) {
@@ -49,11 +49,11 @@ public class MotherloadMineOverlay extends OverlayPanel {
             }
 
             panelComponent.getChildren().add(LineComponent.builder()
-                    .left("Sack: " + script.currentSackCount() + "/" + MotherloadMineScript.SACK_SIZE)
+                    .left("Sack: " + script.currentSackCount() + "/" + OpraMotherlodeScript.SACK_SIZE)
                     .build());
 
             panelComponent.getChildren().add(LineComponent.builder()
-                    .right("Version: " + MotherloadMinePlugin.version)
+                    .right("Version: " + OpraMotherlodePlugin.version)
                     .build());
         } catch (Exception ex) {
             log.error("Error rendering Motherload Mine overlay: ", ex);

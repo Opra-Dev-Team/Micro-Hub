@@ -1,4 +1,4 @@
-package net.runelite.client.plugins.microbot.motherloadmine.enums;
+package net.runelite.client.plugins.microbot.opramotherlode.enums;
 
 import java.util.Arrays;
 import java.util.Comparator;
