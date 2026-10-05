@@ -74,6 +74,7 @@ $script:PluginBlurbs = @{
     'EclipseRedPlugin.jar' = 'Collects Eclipse red at the Hunter Guild.'
     'MoltenGlassPlugin.jar' = 'Smelts molten glass at the Edgeville furnace.'
     'FlaxPickerPlugin.jar' = 'Picks flax at Nemus Retreat and can spin it.'
+    'MotherloadMinePlugin.jar' = 'Mines paydirt in the Motherlode Mine.'
 }
 
 function Get-LibraryJarNames {
