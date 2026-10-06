@@ -104,7 +104,7 @@ public interface OpraMotherlodeConfig extends Config
 	@ConfigItem(
 		keyName = fixWaterwheel,
 		name = "Fix Water Wheel",
-		description = "Repair a water wheel when it is stopped. A spinning wheel is left alone.",
+		description = "Repair a water wheel when it is stopped. A spinning wheel is left alone. Off waits at the current vein until someone else starts the wheel, then deposits.",
 		position = 2,
 		section = featureSection
 	)

@@ -60,6 +60,7 @@ public class OpraMotherlodeScript extends Script
     private static final int STUCK_VEIN_IDLE_MS = 4_000;
     private static final int GEM_BAG_OPEN_TIMEOUT_MS = 2_000;
     private static final int ROCKFALL_RANGE = 12;
+    private static final int ROCKFALL_PATH_TILES = 2;
     private static final int ROCKFALL_A = 26679;
     private static final int ROCKFALL_B = 26680;
 
@@ -93,6 +94,7 @@ public class OpraMotherlodeScript extends Script
 
 
 	private boolean shouldRepairWaterwheel = false;
+	private boolean waitingForOthersToFixWheel = false;
 	private int wheelRepairMisses = 0;
 	private boolean emptySackWorkflowActive = false;
 	private int cameraTurnedTowardId;
@@ -134,6 +136,7 @@ public class OpraMotherlodeScript extends Script
         idleAtVeinSince = 0;
         lastLoggedStatus = null;
         shouldRepairWaterwheel = false;
+        waitingForOthersToFixWheel = false;
         wheelRepairMisses = 0;
         nearbyMiners = new ArrayList<>();
         emptySackWorkflowActive = false;
@@ -232,6 +235,10 @@ public class OpraMotherlodeScript extends Script
         }
 
         if (payDirtCount() > 0 && Rs2Inventory.isFull()) {
+            if (shouldHoldDepositForWheel()) {
+                status = MLMStatus.MINING;
+                return;
+            }
             resetMiningState();
             status = MLMStatus.DEPOSIT_HOPPER;
             return;
@@ -259,6 +266,19 @@ public class OpraMotherlodeScript extends Script
 			idleAtVeinSince = 0;
 			status = MLMStatus.EMPTY_SACK;
 			return;
+		}
+		if (waitingForOthersToFixWheel && !config.fixWaterwheel() && Rs2Inventory.isFull() && payDirtCount() > 0) {
+			if (wheelSeenSpinning()) {
+				waitingForOthersToFixWheel = false;
+			} else {
+				WorldPoint here = playerLocation();
+				if (miningVeinTile != null && here != null && here.distanceTo(miningVeinTile) > 2) {
+					walkToward(miningVeinTile, 1);
+				} else if (miningVeinTile == null) {
+					walkToMiningSpot();
+				}
+				return;
+			}
 		}
 		if (Rs2Player.getAnimation() != AnimationID.IDLE || AntibanPlugin.isMining()) {
 			idleAtVeinSince = 0;
@@ -531,6 +551,20 @@ public class OpraMotherlodeScript extends Script
             Rs2Inventory.interact("gem bag", "fill");
             if (!Rs2Inventory.isFull())
             {
+                return;
+            }
+        }
+
+        if (!config.fixWaterwheel() && (waterwheelNeedsRepair() || waitingForOthersToFixWheel)) {
+            if (waterwheelNeedsRepair()) {
+                waitingForOthersToFixWheel = true;
+            }
+            if (wheelSeenSpinning()) {
+                waitingForOthersToFixWheel = false;
+            } else if (waitingForOthersToFixWheel) {
+                log.info("Water wheel is stopped, waiting at the vein");
+                status = MLMStatus.MINING;
+                returnToVein();
                 return;
             }
         }
@@ -827,17 +861,35 @@ public class OpraMotherlodeScript extends Script
         if (here == null || destination == null) {
             return null;
         }
-        int playerToDestination = here.distanceTo(destination);
         return rs2TileObjectCache.query().where(object -> {
             if (!isRockfall(object.getId())) {
                 return false;
             }
             WorldPoint location = object.getWorldLocation();
-            if (location == null || here.distanceTo(location) > ROCKFALL_RANGE) {
+            if (location == null || location.getPlane() != here.getPlane()
+                    || here.distanceTo(location) > ROCKFALL_RANGE) {
                 return false;
             }
-            return location.distanceTo(destination) < playerToDestination;
+            return rockfallOnPath(here, location, destination);
         }).nearestOnClientThread();
+    }
+
+    private boolean rockfallOnPath(WorldPoint here, WorldPoint rock, WorldPoint destination)
+    {
+        int dx = destination.getX() - here.getX();
+        int dy = destination.getY() - here.getY();
+        int lengthSquared = dx * dx + dy * dy;
+        if (lengthSquared == 0) {
+            return false;
+        }
+        double along = ((rock.getX() - here.getX()) * (double) dx + (rock.getY() - here.getY()) * (double) dy) / lengthSquared;
+        if (along <= 0 || along >= 1) {
+            return false;
+        }
+        double projectedX = here.getX() + along * dx;
+        double projectedY = here.getY() + along * dy;
+        double offPath = Math.hypot(rock.getX() - projectedX, rock.getY() - projectedY);
+        return offPath <= ROCKFALL_PATH_TILES;
     }
 
     private boolean rockfallAt(WorldPoint tile)
@@ -1301,6 +1353,60 @@ public class OpraMotherlodeScript extends Script
 			.where(o -> o.getId() == ObjectID.MOTHERLODE_WHEEL_STRUT_BROKEN)
 			.toListOnClientThread();
 		return broken == null ? new ArrayList<>() : broken;
+	}
+
+	private boolean shouldHoldDepositForWheel()
+	{
+		if (config.fixWaterwheel()) {
+			return false;
+		}
+		if (waterwheelNeedsRepair()) {
+			waitingForOthersToFixWheel = true;
+			return true;
+		}
+		if (!waitingForOthersToFixWheel) {
+			return false;
+		}
+		if (wheelSeenSpinning()) {
+			waitingForOthersToFixWheel = false;
+			return false;
+		}
+		return true;
+	}
+
+	private boolean wheelSeenSpinning()
+	{
+		if (!brokenStruts().isEmpty()) {
+			return false;
+		}
+		List<Rs2TileObjectModel> wheels = rs2TileObjectCache.query()
+			.where(o -> o.getId() == SPINNING_WATER_WHEEL || o.getId() == STOPPED_WATER_WHEEL)
+			.toListOnClientThread();
+		if (wheels == null || wheels.isEmpty()) {
+			return false;
+		}
+		boolean spinning = false;
+		for (Rs2TileObjectModel wheel : wheels) {
+			if (wheel == null) {
+				continue;
+			}
+			if (wheel.getId() == STOPPED_WATER_WHEEL) {
+				return false;
+			}
+			if (wheel.getId() == SPINNING_WATER_WHEEL) {
+				spinning = true;
+			}
+		}
+		return spinning;
+	}
+
+	private void returnToVein()
+	{
+		if (miningVeinTile != null) {
+			walkToward(miningVeinTile, 1);
+			return;
+		}
+		walkToMiningSpot();
 	}
 
 	private boolean waterwheelNeedsRepair() {

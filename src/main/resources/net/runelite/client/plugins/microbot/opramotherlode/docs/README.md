@@ -16,5 +16,5 @@ The config group is `opra-motherlode`.
 - **Drop Gems**: drop gems while mining.
 - **Use Mine Upstairs**: when Mining Area is Any, mine upstairs. A specific Mining Area is used as selected.
 - **Use Upstairs Hopper**: deposit in the upstairs hopper while you are upstairs.
-- **Fix Water Wheel**: after a hopper deposit, repair a wheel only when it is stopped. A spinning wheel is left alone.
+- **Fix Water Wheel**: after a hopper deposit, repair a wheel only when it is stopped. A spinning wheel is left alone. Off waits at the current vein until someone else starts the wheel, then deposits.
 - **Mining Area**: which vein area to use. Default is any.
