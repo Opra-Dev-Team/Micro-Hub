@@ -969,6 +969,10 @@ function Update-LibraryLayout($form) {
     $close.Location = New-Object System.Drawing.Point(($install.Left - $close.Width - 20), ($btnY + 10))
     $uninstall = $form.Tag.UninstallButton
     $uninstall.Location = New-Object System.Drawing.Point(($close.Left - $uninstall.Width - 18), ($btnY + 10))
+    $updateAll = $form.Tag.UpdateAllButton
+    if ($null -ne $updateAll) {
+        $updateAll.Location = New-Object System.Drawing.Point(($uninstall.Left - $updateAll.Width - 16), $btnY)
+    }
 }
 
 function New-LibraryForm {
@@ -1134,6 +1138,11 @@ function New-LibraryForm {
     $shortcutLink.Cursor = [System.Windows.Forms.Cursors]::Hand
     Update-ShortcutLink $shortcutLink
 
+    $updateAllButton = New-SetupButton 'Update all' 'danger'
+    $updateAllButton.Size = New-Object System.Drawing.Size(120, 40)
+    $updateAllButton.ForeColor = $script:ColorAccent
+    $updateAllButton.FlatAppearance.BorderColor = $script:ColorAccent
+
     $installButton = New-SetupButton 'Install selected' 'primary'
     $installButton.Size = New-Object System.Drawing.Size(168, 40)
     $installButton.Add_EnabledChanged({
@@ -1172,6 +1181,7 @@ function New-LibraryForm {
         ClearSelection = $clearSelection
         List = $list
         InstallButton = $installButton
+        UpdateAllButton = $updateAllButton
         UninstallButton = $uninstallButton
         CloseButton = $closeButton
         ShortcutLink = $shortcutLink
@@ -1248,6 +1258,26 @@ function New-LibraryForm {
         [void] (Invoke-InstallPlugins $form $log $names)
     }.GetNewClosure())
 
+    $updateAllButton.Add_Click({
+        Update-PluginCardStatus $form
+        $outdated = @(Get-OutdatedLibraryJars)
+        if ($outdated.Count -eq 0) {
+            $anyInstalled = $false
+            foreach ($jarName in @(Get-LibraryJarNames)) {
+                if ((Get-InstalledCopy $jarName).Count -gt 0) { $anyInstalled = $true; break }
+            }
+            if ($anyInstalled) {
+                Set-HubStatus $form 'All plugins are up to date.' 'ok'
+                Write-Log $log 'All plugins are up to date.'
+            } else {
+                Set-HubStatus $form 'No plugins are installed yet.' 'idle'
+                Write-Log $log 'No plugins are installed yet. Turn some on and use Install selected.'
+            }
+            return
+        }
+        [void] (Invoke-InstallPlugins $form $log $outdated)
+    }.GetNewClosure())
+
     $uninstallButton.Add_Click({
         Update-PluginCardStatus $form
         if (Test-ClientRunning) {
@@ -1289,7 +1319,7 @@ function New-LibraryForm {
     $header.Controls.AddRange(@($mark, $title, $subtitle, $teamLabel, $githubLink, $microbotLink))
     $form.Controls.AddRange(@(
         $header, $warning, $selectAll, $clearSelection, $list, $statusLine, $detailsLink, $progress, $log,
-        $shortcutLink, $uninstallButton, $closeButton, $installButton
+        $shortcutLink, $updateAllButton, $uninstallButton, $closeButton, $installButton
     ))
     Update-LibraryLayout $form
 

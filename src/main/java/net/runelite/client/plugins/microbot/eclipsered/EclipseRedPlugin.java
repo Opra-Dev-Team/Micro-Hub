@@ -24,7 +24,7 @@ import java.time.Instant;
 )
 @Slf4j
 public class EclipseRedPlugin extends Plugin {
-    public static final String version = "1.2.4";
+    public static final String version = "1.0.9";
     static final String CONFIG = "eclipsered";
 
     public Instant scriptStartTime;
