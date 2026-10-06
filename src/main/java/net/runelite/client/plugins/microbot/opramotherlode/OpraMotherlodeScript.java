@@ -254,6 +254,12 @@ public class OpraMotherlodeScript extends Script
 
 	private void handleMining()
 	{
+		if (currentSackCount() >= SACK_SIZE) {
+			miningVeinTile = null;
+			idleAtVeinSince = 0;
+			status = MLMStatus.EMPTY_SACK;
+			return;
+		}
 		if (Rs2Player.getAnimation() != AnimationID.IDLE || AntibanPlugin.isMining()) {
 			idleAtVeinSince = 0;
 			return;
@@ -355,12 +361,6 @@ public class OpraMotherlodeScript extends Script
 		if (hasOreInInventory())
 		{
 			useDepositBox();
-			return;
-		}
-
-		if (Rs2Inventory.isFull() && payDirtCount() > 0)
-		{
-			depositHopper();
 			return;
 		}
 
