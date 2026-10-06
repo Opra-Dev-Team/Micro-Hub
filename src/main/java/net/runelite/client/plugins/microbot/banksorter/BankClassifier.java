@@ -24,7 +24,7 @@ final class BankClassifier {
     );
     static final List<String> CATEGORY_ORDER = Arrays.asList(
             "Currency", "Main-Extra",
-            "Teleportation", "Potions", "Food-Cooked", "Drinks",
+            "Teleportation", "Potions", "Food-Cooked", "Drinks", "Supplies-Other",
             "Armour-Set-Graceful", "Armour-Set-Void", "Armour-Set-Barrows", "Armour-Set-Magic",
             "Weapon-Melee", "Weapon-Ranged", "Weapon-Magic",
             "Armour-Helmet", "Armour-Cape", "Armour-Amulet", "Armour-Body", "Armour-Legs",
@@ -174,7 +174,8 @@ final class BankClassifier {
         String cat = item.getCategory();
 
         if (cat.equals("Currency") || cat.equals("Main-Extra")) return BankHomeTab.MAIN;
-        if (cat.equals("Teleportation") || cat.equals("Potions") || cat.equals("Food-Cooked") || cat.equals("Drinks")) {
+        if (cat.equals("Teleportation") || cat.equals("Potions") || cat.equals("Food-Cooked") || cat.equals("Drinks")
+                || cat.equals("Supplies-Other")) {
             return BankHomeTab.SUPPLIES;
         }
         if (cat.startsWith("Weapon-") || cat.startsWith("Armour-") || cat.equals("Ammunition")
@@ -252,11 +253,14 @@ final class BankClassifier {
         if (isHoliday(processedName)) return "Cosmetic/Holiday";
         if (isTeleport(processedName, options)) return "Teleportation";
         if (options.tight() && isHerblorePotion(processedName)) return "Farming-Potion";
+        if (name.contains("glass")) return "Production-Glass";
         if (isDrink(processedName)) {
             return options.drinksWithFood() ? "Food-Cooked" : "Drinks";
         }
         if (isPotion(item)) return "Potions";
-        if (isRawFish(name)) return "Gathering-Raw-Fish";
+        if (isRawFish(name)) {
+            return options.rawFishWithFood() ? "Food-Cooked" : "Gathering-Raw-Fish";
+        }
         if (containsAny(name, RAW_MEATS)) return "Gathering-Raw-Meat";
         if (name.contains("wine of zamorak")) return "Farming-Secondary";
         if (isFood(processedName, options)) return "Food-Cooked";
@@ -437,6 +441,10 @@ final class BankClassifier {
         if (options.tight() && name.contains("looting bag")) return "Combat-Misc";
         if (options.tight() && isDye(name)) return "Production-Other";
         if (name.contains("quest") || (name.contains("key") && !name.contains("crystal key"))) return "Quest-Items";
+        String leftover = leftoverCategory(name);
+        if (leftover != null) {
+            return leftover;
+        }
         return "Miscellaneous";
     }
 
@@ -590,7 +598,8 @@ final class BankClassifier {
 
     private static boolean isFood(String processed, OrganizeOptions options) {
         if (processed.contains("wine of zamorak") || processed.equals("cake tin") || processed.equals("pie dish")
-                || processed.contains("seed") || processed.contains("sapling") || processed.contains("potion")) {
+                || processed.contains("seed") || processed.contains("sapling") || processed.contains("potion")
+                || processed.contains("paint") || processed.contains("glass")) {
             return false;
         }
         if (processed.equals("cabbage") || processed.equals("onion") || processed.startsWith("apples")) {
@@ -600,7 +609,7 @@ final class BankClassifier {
             return true;
         }
         for (String food : FOOD) {
-            if (processed.contains(food)) {
+            if (containsTerm(processed, food)) {
                 return true;
             }
         }
@@ -615,18 +624,41 @@ final class BankClassifier {
     }
 
     private static boolean isDrink(String processed) {
-        if (processed.contains("wine of zamorak") || processed.contains("shaker") || processed.contains("guide")) {
+        if (processed.contains("wine of zamorak") || processed.contains("shaker") || processed.contains("guide")
+                || processed.contains("glass") || processed.contains("paint")) {
             return false;
         }
-        return processed.contains("beer")
-                || processed.contains("ale")
-                || processed.contains("cider")
-                || processed.contains("grog")
-                || processed.contains("wine")
-                || processed.contains("mind bomb")
-                || processed.contains("eclipse red")
-                || processed.contains("cup of tea")
-                || processed.contains("cocktail");
+        return containsTerm(processed, "beer")
+                || containsTerm(processed, "ale")
+                || containsTerm(processed, "cider")
+                || containsTerm(processed, "grog")
+                || containsTerm(processed, "wine")
+                || containsTerm(processed, "mind bomb")
+                || containsTerm(processed, "eclipse red")
+                || containsTerm(processed, "tea")
+                || containsTerm(processed, "cocktail");
+    }
+
+    private static String leftoverCategory(String name) {
+        if (!OrganizeOptions.current().fileLeftovers()) {
+            return null;
+        }
+        if (name.contains("spore")) {
+            return "Farming-Seed";
+        }
+        if (name.contains("bird house")) {
+            return "Farming-Supply";
+        }
+        if (name.equals("nettles") || name.equals("nettle")) {
+            return "Farming-Secondary";
+        }
+        if (name.contains("unpowered orb") || name.endsWith(" orb")) {
+            return "Production-Glass";
+        }
+        if (name.contains("waterskin")) {
+            return "Supplies-Other";
+        }
+        return null;
     }
 
     private static boolean isHerblorePotion(String name) {
@@ -666,6 +698,27 @@ final class BankClassifier {
             "plateskirt", "shield", "boots", "gloves", "gauntlets", "vambraces",
             "arrow", "bolt", "dart", "javelin", "knife", "chaps"
     };
+
+    static boolean containsTerm(String name, String term) {
+        int from = 0;
+        while (from < name.length()) {
+            int i = name.indexOf(term, from);
+            if (i < 0) {
+                return false;
+            }
+            boolean start = i == 0 || !Character.isLetter(name.charAt(i - 1));
+            int end = i + term.length();
+            boolean endOk = end >= name.length() || !Character.isLetter(name.charAt(end));
+            if (!endOk && name.charAt(end) == 's') {
+                endOk = end + 1 >= name.length() || !Character.isLetter(name.charAt(end + 1));
+            }
+            if (start && endOk) {
+                return true;
+            }
+            from = i + 1;
+        }
+        return false;
+    }
 
     static boolean containsWord(String name, String word) {
         int from = 0;
@@ -740,6 +793,9 @@ final class BankClassifier {
     }
 
     private static boolean isRawFish(String name) {
+        if (name.equals("mackerel") || name.equals("cod") || name.equals("giant crab meat")) {
+            return true;
+        }
         if (!name.startsWith("raw ")) {
             return false;
         }

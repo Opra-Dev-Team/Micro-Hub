@@ -38,16 +38,19 @@ $script:PluginDirs = @(
 $script:InstallDir = $script:PluginDirs[0]
 $script:SkipClientCheck = $false
 
-$script:ColorBg = [System.Drawing.Color]::FromArgb(18, 18, 20)
-$script:ColorCard = [System.Drawing.Color]::FromArgb(32, 33, 38)
-$script:ColorCardEdge = [System.Drawing.Color]::FromArgb(58, 60, 68)
-$script:ColorText = [System.Drawing.Color]::FromArgb(245, 245, 247)
-$script:ColorMuted = [System.Drawing.Color]::FromArgb(161, 161, 170)
-$script:ColorAccent = [System.Drawing.Color]::FromArgb(255, 59, 48)
-$script:ColorAccentDark = [System.Drawing.Color]::FromArgb(214, 40, 32)
+$script:ColorBg = [System.Drawing.Color]::FromArgb(12, 12, 12)
+$script:ColorCard = [System.Drawing.Color]::FromArgb(22, 22, 22)
+$script:ColorCardEdge = [System.Drawing.Color]::FromArgb(46, 46, 46)
+$script:ColorText = [System.Drawing.Color]::FromArgb(232, 232, 232)
+$script:ColorMuted = [System.Drawing.Color]::FromArgb(154, 154, 154)
+$script:ColorAccent = [System.Drawing.Color]::FromArgb(255, 255, 0)
+$script:ColorAccentDark = [System.Drawing.Color]::FromArgb(214, 214, 0)
 $script:ColorInstalled = [System.Drawing.Color]::FromArgb(52, 211, 153)
-$script:ColorWarning = [System.Drawing.Color]::FromArgb(251, 191, 36)
-$script:ColorLog = [System.Drawing.Color]::FromArgb(14, 14, 16)
+$script:ColorWarning = [System.Drawing.Color]::FromArgb(255, 255, 0)
+$script:ColorLog = [System.Drawing.Color]::FromArgb(8, 8, 8)
+$script:ColorTrackOff = [System.Drawing.Color]::FromArgb(58, 58, 58)
+$script:TitleFontCollection = $null
+$script:UpdateWaitNoted = $false
 
 $script:HashCache = @{}
 $script:SourceMetaCache = @{}
@@ -76,6 +79,7 @@ $script:PluginBlurbs = @{
     'MoltenGlassPlugin.jar' = 'Smelts molten glass at the Edgeville furnace.'
     'FlaxPickerPlugin.jar' = 'Picks flax at Nemus Retreat and can spin it.'
     'OpraMotherlodePlugin.jar' = 'Mines paydirt in the Motherlode Mine.'
+    'OpraHouseThievingPlugin.jar' = 'Pickpockets wealthy citizens and thieves houses in Varlamore.'
 }
 
 function Get-LibraryJarNames {
@@ -271,7 +275,23 @@ function Test-DesktopShortcut {
 }
 
 function Get-InstallerIconSource {
-    return (Join-Path $ScriptDir 'micro-hub.ico')
+    return (Join-Path $ScriptDir 'logo.ico')
+}
+
+function Get-HubTitleFont([float] $pixelSize) {
+    $path = Join-Path $ScriptDir 'fonts\Jersey10-Regular.ttf'
+    if ($null -eq $script:TitleFontCollection -and (Test-Path -LiteralPath $path)) {
+        $script:TitleFontCollection = New-Object System.Drawing.Text.PrivateFontCollection
+        $script:TitleFontCollection.AddFontFile($path)
+    }
+    if ($null -ne $script:TitleFontCollection -and $script:TitleFontCollection.Families.Length -gt 0) {
+        return New-Object System.Drawing.Font(
+            $script:TitleFontCollection.Families[0],
+            $pixelSize,
+            [System.Drawing.FontStyle]::Regular,
+            [System.Drawing.GraphicsUnit]::Pixel)
+    }
+    return New-Object System.Drawing.Font('Segoe UI Semibold', 20)
 }
 
 function Start-BrandUri([string] $uri) {
@@ -308,7 +328,7 @@ function Install-ShortcutIcon {
     if (-not (Test-Path -LiteralPath $script:LauncherDir)) {
         New-Item -ItemType Directory -Path $script:LauncherDir | Out-Null
     }
-    $dest = Join-Path $script:LauncherDir 'micro-hub.ico'
+    $dest = Join-Path $script:LauncherDir 'logo.ico'
     Copy-Item -LiteralPath $source -Destination $dest -Force
     return $dest
 }
@@ -386,8 +406,9 @@ function Test-LegacyJarInstalled([string] $jarName) {
     return (Get-InstalledCopy $legacy).Count -gt 0
 }
 
-function Remove-LibraryJars([string[]] $jarNames) {
+function Remove-LibraryJars([string[]] $jarNames, [scriptblock] $onStep) {
     $removed = @()
+    $step = 0
     foreach ($jarName in $jarNames) {
         $targets = @($jarName)
         $legacy = Get-LegacyJarName $jarName
@@ -401,11 +422,15 @@ function Remove-LibraryJars([string[]] $jarNames) {
                 $removed += $path
             }
         }
+        $step++
+        if ($null -ne $onStep) {
+            & $onStep $step $jarNames.Count $jarName
+        }
     }
     return @($removed)
 }
 
-function Install-Library([string[]] $jarNames) {
+function Install-Library([string[]] $jarNames, [scriptblock] $onStep) {
     if (Test-ClientRunning) {
         throw 'Close the game client first so the old plugin files can be deleted.'
     }
@@ -426,11 +451,16 @@ function Install-Library([string[]] $jarNames) {
         New-Item -ItemType Directory -Path $script:InstallDir | Out-Null
     }
     $installed = @()
+    $step = 0
     foreach ($jarName in $jarNames) {
         $source = Join-Path $DistDir $jarName
         $dest = Join-Path $script:InstallDir $jarName
         [System.IO.File]::Copy($source, $dest, $true)
         $installed += $dest
+        $step++
+        if ($null -ne $onStep) {
+            & $onStep $step $jarNames.Count $jarName
+        }
     }
     return @{
         Removed = $removed
@@ -438,14 +468,14 @@ function Install-Library([string[]] $jarNames) {
     }
 }
 
-function Uninstall-Library([string[]] $jarNames) {
+function Uninstall-Library([string[]] $jarNames, [scriptblock] $onStep) {
     if (Test-ClientRunning) {
         throw 'Close the game client first so the plugin files can be deleted.'
     }
     if ($jarNames.Count -eq 0) {
         throw 'Select at least one plugin.'
     }
-    return @(Remove-LibraryJars $jarNames)
+    return @(Remove-LibraryJars $jarNames $onStep)
 }
 
 function Get-CheckedJarNames($form) {
@@ -463,10 +493,64 @@ function Get-CheckedJarNames($form) {
 function Write-Log($box, [string] $message) {
     if ($null -eq $box) { return }
     $box.AppendText(("[{0}]  {1}{2}" -f (Get-Date -Format 'HH:mm:ss'), $message, [Environment]::NewLine))
-    $owner = $box.FindForm()
-    if ($null -ne $owner -and $null -ne $owner.Tag -and $null -ne $owner.Tag.StatusLine) {
-        $owner.Tag.StatusLine.Text = $message
+}
+
+function Set-HubStatus($form, [string] $message, [string] $kind) {
+    if ($null -eq $form -or $null -eq $form.Tag -or $null -eq $form.Tag.StatusLine) { return }
+    $form.Tag.StatusLine.Text = $message
+    switch ($kind) {
+        'ok' { $form.Tag.StatusLine.ForeColor = $script:ColorInstalled }
+        'wait' { $form.Tag.StatusLine.ForeColor = $script:ColorAccent }
+        'error' { $form.Tag.StatusLine.ForeColor = $script:ColorAccent }
+        'busy' { $form.Tag.StatusLine.ForeColor = $script:ColorText }
+        default { $form.Tag.StatusLine.ForeColor = $script:ColorMuted }
     }
+}
+
+function Show-HubProgress($form, [int] $steps) {
+    $form.Tag.ProgressSteps = [Math]::Max(1, $steps)
+    $form.Tag.ProgressShown = 0
+    $form.Tag.ProgressTarget = 0
+    $form.Tag.Progress.Visible = $true
+    Update-LibraryLayout $form
+    Advance-HubProgress $form 0.08
+}
+
+function Advance-HubProgress($form, [double] $target) {
+    if ($null -eq $form -or $null -eq $form.Tag.Progress) { return }
+    $form.Tag.ProgressTarget = [Math]::Max(0, [Math]::Min(1, $target))
+    $form.Tag.Progress.Visible = $true
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($watch.ElapsedMilliseconds -lt 240) {
+        $shown = [double] $form.Tag.ProgressShown
+        $goal = [double] $form.Tag.ProgressTarget
+        if ([Math]::Abs($shown - $goal) -le 0.012) {
+            $form.Tag.ProgressShown = $goal
+            $form.Tag.Progress.Invalidate()
+            [System.Windows.Forms.Application]::DoEvents()
+            break
+        }
+        $form.Tag.ProgressShown = $shown + (($goal - $shown) * 0.38)
+        $form.Tag.Progress.Invalidate()
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 16
+    }
+}
+
+function Complete-HubProgress($form) {
+    Advance-HubProgress $form 1
+    if ($null -ne $form.Tag.Progress) {
+        $form.Tag.Progress.Visible = $false
+    }
+    Update-LibraryLayout $form
+}
+
+function Hide-HubProgress($form) {
+    if ($null -eq $form -or $null -eq $form.Tag.Progress) { return }
+    $form.Tag.Progress.Visible = $false
+    $form.Tag.ProgressShown = 0
+    $form.Tag.ProgressTarget = 0
+    Update-LibraryLayout $form
 }
 
 function Set-ControlBuffered($control) {
@@ -499,8 +583,8 @@ function New-SetupButton([string] $text, [string] $kind) {
     $button.FlatAppearance.BorderSize = 0
     if ($kind -eq 'primary') {
         $button.BackColor = $script:ColorAccent
-        $button.ForeColor = [System.Drawing.Color]::White
-        $button.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(255, 84, 74)
+        $button.ForeColor = [System.Drawing.Color]::Black
+        $button.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(255, 255, 140)
         $button.FlatAppearance.MouseDownBackColor = $script:ColorAccentDark
     } elseif ($kind -eq 'danger') {
         $button.BackColor = $script:ColorCard
@@ -547,12 +631,13 @@ function Build-PluginCards($form) {
         $available = Test-Path -LiteralPath $source
         $card = New-Object System.Windows.Forms.Panel
         $card.Location = New-Object System.Drawing.Point(8, $y)
-        $card.Size = New-Object System.Drawing.Size($cardWidth, 72)
+        $card.Size = New-Object System.Drawing.Size($cardWidth, 46)
         $card.BackColor = $script:ColorBg
         $card.Cursor = [System.Windows.Forms.Cursors]::Hand
         $card.Tag = @{
             JarName = $jarName
             Checked = [bool] $available
+            Knob = $(if ($available) { 1.0 } else { 0.0 })
             Available = [bool] $available
             AvailableVersion = (Get-AvailablePluginVersion $jarName)
             HasUpdate = $false
@@ -566,51 +651,59 @@ function Build-PluginCards($form) {
             $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
             $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
             $bounds = New-Object System.Drawing.Rectangle(0, 0, ($sender.Width - 1), ($sender.Height - 1))
-            $path = New-RoundedPath $bounds 12
+            $path = New-RoundedPath $bounds 8
             $fill = New-Object System.Drawing.SolidBrush $script:ColorCard
             $g.FillPath($fill, $path)
             $pen = New-Object System.Drawing.Pen $script:ColorCardEdge
             $g.DrawPath($pen, $path)
-            if ($sender.Tag.Checked) {
-                $bar = New-Object System.Drawing.Rectangle(10, 22, 4, 28)
-                $barPath = New-RoundedPath $bar 2
-                $barBrush = New-Object System.Drawing.SolidBrush $script:ColorAccent
-                $g.FillPath($barBrush, $barPath)
-                $barBrush.Dispose()
-                $barPath.Dispose()
-            }
-            $box = New-Object System.Drawing.Rectangle(26, 25, 22, 22)
-            $boxPath = New-RoundedPath $box 6
-            if ($sender.Tag.Checked) {
-                $checkBrush = New-Object System.Drawing.SolidBrush $script:ColorAccent
-                $g.FillPath($checkBrush, $boxPath)
-                $checkBrush.Dispose()
-                $mark = New-Object System.Drawing.Pen ([System.Drawing.Color]::White), 2
-                $g.DrawLine($mark, 31, 36, 36, 41)
-                $g.DrawLine($mark, 36, 41, 44, 30)
-                $mark.Dispose()
-            } else {
-                $empty = New-Object System.Drawing.Pen $script:ColorMuted
-                $g.DrawPath($empty, $boxPath)
-                $empty.Dispose()
-            }
+            $knobT = [double] $sender.Tag.Knob
+            if ($knobT -lt 0) { $knobT = 0 }
+            if ($knobT -gt 1) { $knobT = 1 }
+            $trackH = 16
+            $trackW = 34
+            $trackY = [int] (($sender.Height - $trackH) / 2)
+            $track = New-Object System.Drawing.Rectangle(12, $trackY, $trackW, $trackH)
+            $trackPath = New-RoundedPath $track 8
+            $trackOff = $script:ColorTrackOff
+            $trackOn = $script:ColorAccent
+            if (-not $sender.Tag.Available) { $trackOn = $script:ColorCardEdge }
+            $trackColor = [System.Drawing.Color]::FromArgb(
+                [int] ($trackOff.R + (($trackOn.R - $trackOff.R) * $knobT)),
+                [int] ($trackOff.G + (($trackOn.G - $trackOff.G) * $knobT)),
+                [int] ($trackOff.B + (($trackOn.B - $trackOff.B) * $knobT)))
+            $trackBrush = New-Object System.Drawing.SolidBrush $trackColor
+            $g.FillPath($trackBrush, $trackPath)
+            $knobSize = 12
+            $knobX = $track.X + 2 + [int] (($track.Width - $knobSize - 4) * $knobT)
+            $knobY = $track.Y + 2
+            $knobOff = [System.Drawing.Color]::FromArgb(232, 232, 232)
+            $knobOn = [System.Drawing.Color]::FromArgb(12, 12, 12)
+            $knobColor = [System.Drawing.Color]::FromArgb(
+                [int] ($knobOff.R + (($knobOn.R - $knobOff.R) * $knobT)),
+                [int] ($knobOff.G + (($knobOn.G - $knobOff.G) * $knobT)),
+                [int] ($knobOff.B + (($knobOn.B - $knobOff.B) * $knobT)))
+            $knobBrush = New-Object System.Drawing.SolidBrush $knobColor
+            $g.FillEllipse($knobBrush, $knobX, $knobY, $knobSize, $knobSize)
+            $knobBrush.Dispose()
+            $trackBrush.Dispose()
+            $trackPath.Dispose()
             $pillText = [string] $sender.Tag.PillText
             if ($pillText) {
-                $pillFont = New-Object System.Drawing.Font('Segoe UI Semibold', 9)
+                $pillFont = New-Object System.Drawing.Font('Segoe UI Semibold', 8)
                 $pillSize = $g.MeasureString($pillText, $pillFont)
-                $pillH = 26
-                $pillW = [Math]::Max($pillH, ([int] [Math]::Ceiling($pillSize.Width) + 18))
+                $pillH = 20
+                $pillW = [Math]::Max($pillH, ([int] [Math]::Ceiling($pillSize.Width) + 14))
                 $pillX = $sender.Width - $pillW - 16
                 $pillY = [int] (($sender.Height - $pillH) / 2)
                 $pillBounds = New-Object System.Drawing.Rectangle($pillX, $pillY, $pillW, $pillH)
-                $pillPath = New-RoundedPath $pillBounds 13
+                $pillPath = New-RoundedPath $pillBounds 10
                 $kind = [string] $sender.Tag.PillKind
                 if ($kind -eq 'installed') {
                     $pillBack = [System.Drawing.Color]::FromArgb(16, 48, 36)
                     $pillFore = $script:ColorInstalled
                 } elseif ($kind -eq 'update' -or $kind -eq 'missing') {
-                    $pillBack = [System.Drawing.Color]::FromArgb(48, 36, 12)
-                    $pillFore = $script:ColorWarning
+                    $pillBack = [System.Drawing.Color]::FromArgb(48, 48, 0)
+                    $pillFore = $script:ColorAccent
                 } else {
                     $pillBack = [System.Drawing.Color]::FromArgb(44, 45, 52)
                     $pillFore = $script:ColorMuted
@@ -628,7 +721,6 @@ function Build-PluginCards($form) {
             $path.Dispose()
             $fill.Dispose()
             $pen.Dispose()
-            $boxPath.Dispose()
         })
         $card.Add_Click({
             param($sender, $e)
@@ -643,11 +735,11 @@ function Build-PluginCards($form) {
 
         $name = New-Object System.Windows.Forms.Label
         $name.Text = Get-PluginLabel $jarName
-        $name.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 12)
+        $name.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 10)
         $name.ForeColor = $script:ColorText
         $name.BackColor = $script:ColorCard
         $name.AutoSize = $true
-        $name.Location = New-Object System.Drawing.Point(60, 14)
+        $name.Location = New-Object System.Drawing.Point(54, 4)
         Add-CardToggle $name $card
 
         $detail = New-Object System.Windows.Forms.Label
@@ -656,18 +748,18 @@ function Build-PluginCards($form) {
         if (-not $blurb) { $blurb = 'Library plugin' }
         $detail.Text = $blurb
         if (-not $available) { $name.ForeColor = $script:ColorMuted }
-        $detail.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+        $detail.Font = New-Object System.Drawing.Font('Segoe UI', 8)
         $detail.ForeColor = $script:ColorMuted
         $detail.BackColor = $script:ColorCard
         $detail.AutoSize = $false
-        $detail.Size = New-Object System.Drawing.Size(($cardWidth - 230), 22)
-        $detail.Location = New-Object System.Drawing.Point(60, 38)
+        $detail.Size = New-Object System.Drawing.Size(($cardWidth - 220), 16)
+        $detail.Location = New-Object System.Drawing.Point(54, 24)
         Add-CardToggle $detail $card
 
         $card.Controls.AddRange(@($name, $detail))
         $list.Controls.Add($card)
         [void] $cards.Add($card)
-        $y += 84
+        $y += 52
     }
     if ($names.Count -eq 0) {
         $empty = New-Object System.Windows.Forms.Label
@@ -736,38 +828,33 @@ function Update-PluginCardStatus($form) {
 function Invoke-InstallPlugins($form, $log, [string[]] $names) {
     if ($names.Count -eq 0) { return $false }
     if (Test-ClientRunning) {
-        [System.Windows.Forms.MessageBox]::Show(
-            $form,
-            'Close the game client first so the old plugin files can be deleted.',
-            'Client is running',
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+        $form.Tag.Warning.Visible = $true
+        Update-LibraryLayout $form
+        Set-HubStatus $form 'Close the game client first. Install will wait until it closes.' 'wait'
+        Write-Log $log 'Install is waiting for the game client to close.'
         return $false
     }
+    $form.Tag.Busy = $true
     try {
-        $hadUpdates = @($names | Where-Object { Test-PluginNeedsUpdate $_ }).Count -gt 0
-        $result = Install-Library $names
+        Show-HubProgress $form $names.Count
+        $result = Install-Library $names {
+            param($step, $total, $jarName)
+            Set-HubStatus $form ("Installing $(Get-PluginLabel $jarName)") 'busy'
+            Advance-HubProgress $form ($step / [Math]::Max(1, $total))
+        }
         foreach ($path in $result.Removed) { Write-Log $log "Removed old copy: $path" }
         foreach ($path in $result.Installed) { Write-Log $log "Installed: $path" }
         Write-Log $log 'Restart the client, then enable the plugins you want.'
-        $title = if ($hadUpdates) { 'Installed / updated' } else { 'Installed' }
-        [System.Windows.Forms.MessageBox]::Show(
-            $form,
-            "Installed or updated $($result.Installed.Count) plugin(s).`r`n`r`nRestart the client before using them.",
-            $title,
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+        Complete-HubProgress $form
+        Set-HubStatus $form "Installed $($result.Installed.Count). Restart the client before using them." 'ok'
         return $true
     } catch {
+        Hide-HubProgress $form
         Write-Log $log $_.Exception.Message
-        [System.Windows.Forms.MessageBox]::Show(
-            $form,
-            $_.Exception.Message,
-            'Install failed',
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+        Set-HubStatus $form $_.Exception.Message 'error'
         return $false
     } finally {
+        $form.Tag.Busy = $false
         Update-PluginCardStatus $form
     }
 }
@@ -781,64 +868,54 @@ function Get-OutdatedLibraryJars {
 }
 
 function Invoke-AutomaticUpdates($form, $log) {
-    if ($script:PendingUpdateApplied) { return }
+    if ($script:PendingUpdateApplied -or $form.Tag.Busy) { return }
     $outdated = @(Get-OutdatedLibraryJars)
-    if ($outdated.Count -eq 0) { return }
+    if ($outdated.Count -eq 0) {
+        $script:UpdateWaitNoted = $false
+        return
+    }
     $labels = @($outdated | ForEach-Object { Get-PluginLabel $_ })
     $listText = $labels -join ', '
-    $clientRunning = Test-ClientRunning
-    if (-not $script:UpdateNoticeShown) {
-        $script:UpdateNoticeShown = $true
-        if ($clientRunning) {
+    if (Test-ClientRunning) {
+        if (-not $script:UpdateWaitNoted) {
+            $script:UpdateWaitNoted = $true
             $message = if ($labels.Count -eq 1) {
-                "$listText has an update.`r`n`r`nClose the game client. The old jar will be replaced when the client is closed."
+                "$listText has an update. It will install when the client closes."
             } else {
-                "These plugins have updates: $listText.`r`n`r`nClose the game client. The old jars will be replaced when the client is closed."
+                "Updates ready for $listText. They will install when the client closes."
             }
-        } else {
-            $message = if ($labels.Count -eq 1) {
-                "$listText has an update. The old jar will be replaced with the latest version."
-            } else {
-                "These plugins have updates: $listText.`r`n`r`nThe old jars will be replaced with the latest versions."
-            }
+            Write-Log $log $message
+            Set-HubStatus $form $message 'wait'
         }
-        Write-Log $log (($message -replace "`r`n", ' ').Trim())
-        [System.Windows.Forms.MessageBox]::Show(
-            $form,
-            $message,
-            'Update available',
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
-        if ($clientRunning) { return }
+        return
     }
-    if (Test-ClientRunning) { return }
+    $script:UpdateWaitNoted = $false
     $script:PendingUpdateApplied = $true
+    $form.Tag.Busy = $true
     try {
-        $result = Install-Library $outdated
+        Show-HubProgress $form $outdated.Count
+        $result = Install-Library $outdated {
+            param($step, $total, $jarName)
+            Set-HubStatus $form ("Updating $(Get-PluginLabel $jarName)") 'busy'
+            Advance-HubProgress $form ($step / [Math]::Max(1, $total))
+        }
         foreach ($path in $result.Removed) { Write-Log $log "Removed old copy: $path" }
         foreach ($path in $result.Installed) { Write-Log $log "Updated: $path" }
         $done = if ($labels.Count -eq 1) {
-            "$listText was updated to the latest version. The old jar was removed.`r`n`r`nRestart the client before using it."
+            "$listText was updated. Restart the client before using it."
         } else {
-            "Updated $($labels.Count) plugins: $listText. The old jars were removed.`r`n`r`nRestart the client before using them."
+            "Updated $($labels.Count) plugins. Restart the client before using them."
         }
-        Write-Log $log 'Updated installed plugins. Restart the client before using them.'
-        [System.Windows.Forms.MessageBox]::Show(
-            $form,
-            $done,
-            'Updated',
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+        Write-Log $log $done
+        Complete-HubProgress $form
+        Set-HubStatus $form $done 'ok'
     } catch {
         $script:PendingUpdateApplied = $false
+        Hide-HubProgress $form
         Write-Log $log $_.Exception.Message
-        [System.Windows.Forms.MessageBox]::Show(
-            $form,
-            $_.Exception.Message,
-            'Update failed',
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+        Set-HubStatus $form $_.Exception.Message 'error'
     } finally {
+        $form.Tag.Busy = $false
         Update-PluginCardStatus $form
     }
 }
@@ -847,19 +924,21 @@ function Update-LibraryLayout($form) {
     if ($null -eq $form -or $null -eq $form.Tag -or $null -eq $form.Tag.List) { return }
     $w = $form.ClientSize.Width
     $h = $form.ClientSize.Height
-    $headerH = 120
+    $headerH = 96
     $bannerH = 0
     if ($form.Tag.Warning.Visible) { $bannerH = 40 }
     $toolbarH = 32
     $statusH = 28
+    $progressH = 0
+    if ($null -ne $form.Tag.Progress -and $form.Tag.Progress.Visible) { $progressH = 14 }
     $logH = 0
     if ($form.Tag.DetailsOpen) { $logH = 100 }
     $footerH = 64
 
     $form.Tag.Header.SetBounds(0, 0, $w, $headerH)
     if ($null -ne $form.Tag.GitHubLink) {
-        $form.Tag.GitHubLink.Location = New-Object System.Drawing.Point(210, 86)
-        $form.Tag.MicrobotLink.Location = New-Object System.Drawing.Point(($form.Tag.GitHubLink.Right + 16), 86)
+        $form.Tag.GitHubLink.Location = New-Object System.Drawing.Point(200, 70)
+        $form.Tag.MicrobotLink.Location = New-Object System.Drawing.Point(($form.Tag.GitHubLink.Right + 16), 70)
     }
     $form.Tag.Warning.SetBounds(0, $headerH, $w, $bannerH)
     $y = $headerH + $bannerH + 8
@@ -867,16 +946,19 @@ function Update-LibraryLayout($form) {
     $form.Tag.ClearSelection.Location = New-Object System.Drawing.Point(108, ($y + 2))
 
     $listTop = $y + $toolbarH
-    $listBottom = $h - $footerH - $statusH - $logH - 4
+    $listBottom = $h - $footerH - $statusH - $progressH - $logH - 4
     $listH = [Math]::Max(180, ($listBottom - $listTop))
     $form.Tag.List.SetBounds(16, $listTop, ($w - 32), $listH)
 
     $statusY = $form.Tag.List.Bottom + 8
     $form.Tag.StatusLine.SetBounds(28, $statusY, ($w - 150), 22)
     $form.Tag.DetailsLink.Location = New-Object System.Drawing.Point(($w - 108), $statusY)
+    if ($null -ne $form.Tag.Progress) {
+        $form.Tag.Progress.SetBounds(28, ($statusY + 22), ($w - 56), 8)
+    }
     $form.Tag.Log.Visible = [bool] $form.Tag.DetailsOpen
     if ($form.Tag.DetailsOpen) {
-        $form.Tag.Log.SetBounds(28, ($statusY + $statusH), ($w - 56), $logH)
+        $form.Tag.Log.SetBounds(28, ($statusY + $statusH + $progressH), ($w - 56), $logH)
     }
 
     $btnY = $h - 52
@@ -913,13 +995,13 @@ function New-LibraryForm {
     $header.BackColor = $script:ColorBg
 
     $mark = New-Object System.Windows.Forms.PictureBox
-    $mark.Size = New-Object System.Drawing.Size(40, 40)
-    $mark.Location = New-Object System.Drawing.Point(28, 32)
+    $mark.Size = New-Object System.Drawing.Size(44, 44)
+    $mark.Location = New-Object System.Drawing.Point(24, 18)
     $mark.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
     $mark.BackColor = $script:ColorBg
     $markImage = $null
     $markStream = $null
-    $markPath = Join-Path $ScriptDir 'micro-hub.png'
+    $markPath = Join-Path $ScriptDir 'logo.png'
     if (Test-Path -LiteralPath $markPath) {
         $markStream = Open-UnlockedStream $markPath
         $markImage = [System.Drawing.Image]::FromStream($markStream)
@@ -928,20 +1010,20 @@ function New-LibraryForm {
 
     $title = New-Object System.Windows.Forms.Label
     $title.Text = 'Micro Hub'
-    $title.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 20)
-    $title.ForeColor = $script:ColorText
+    $title.Font = Get-HubTitleFont 30
+    $title.ForeColor = $script:ColorAccent
     $title.BackColor = $script:ColorBg
     $title.AutoSize = $true
-    $title.Location = New-Object System.Drawing.Point(80, 26)
+    $title.Location = New-Object System.Drawing.Point(78, 14)
 
     $subtitle = New-Object System.Windows.Forms.Label
-    $subtitle.Text = 'Choose the plugins to install. Updates replace the old jar when the client is closed.'
-    $subtitle.Font = New-Object System.Drawing.Font('Segoe UI', 10)
+    $subtitle.Text = 'Turn plugins on to install them. Updates apply here when the client closes.'
+    $subtitle.Font = New-Object System.Drawing.Font('Segoe UI', 9)
     $subtitle.ForeColor = $script:ColorMuted
     $subtitle.BackColor = $script:ColorBg
     $subtitle.AutoSize = $false
-    $subtitle.Size = New-Object System.Drawing.Size(640, 22)
-    $subtitle.Location = New-Object System.Drawing.Point(82, 62)
+    $subtitle.Size = New-Object System.Drawing.Size(640, 18)
+    $subtitle.Location = New-Object System.Drawing.Point(80, 46)
 
     $teamLabel = New-Object System.Windows.Forms.Label
     $teamLabel.Text = $script:TeamName
@@ -949,10 +1031,10 @@ function New-LibraryForm {
     $teamLabel.ForeColor = $script:ColorMuted
     $teamLabel.BackColor = $script:ColorBg
     $teamLabel.AutoSize = $true
-    $teamLabel.Location = New-Object System.Drawing.Point(82, 86)
+    $teamLabel.Location = New-Object System.Drawing.Point(80, 70)
 
     $githubLink = New-BrandLink 'GitHub' $script:TeamGitHubUri
-    $githubLink.Location = New-Object System.Drawing.Point(210, 86)
+    $githubLink.Location = New-Object System.Drawing.Point(200, 70)
     $microbotLink = New-BrandLink 'Get Microbot' $script:MicrobotDownloadUri
 
     $selectAll = New-Object System.Windows.Forms.Label
@@ -978,11 +1060,11 @@ function New-LibraryForm {
     Set-ControlBuffered $list
 
     $warning = New-Object System.Windows.Forms.Label
-    $warning.Text = 'Close the game client before installing or removing plugins.'
+    $warning.Text = 'The game client is open. Install, uninstall, and updates wait until it closes.'
     $warning.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
     $warning.Padding = New-Object System.Windows.Forms.Padding(28, 0, 16, 0)
     $warning.ForeColor = $script:ColorWarning
-    $warning.BackColor = [System.Drawing.Color]::FromArgb(42, 32, 12)
+    $warning.BackColor = [System.Drawing.Color]::FromArgb(32, 32, 0)
     $warning.Font = New-Object System.Drawing.Font('Segoe UI', 9)
     $warning.Visible = $false
 
@@ -1012,6 +1094,38 @@ function New-LibraryForm {
     $log.Font = New-Object System.Drawing.Font('Segoe UI', 9)
     $log.Visible = $false
 
+    $progress = New-Object System.Windows.Forms.Panel
+    $progress.BackColor = $script:ColorBg
+    $progress.Visible = $false
+    Set-ControlBuffered $progress
+    $progress.Add_Paint({
+        param($sender, $e)
+        $g = $e.Graphics
+        $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $owner = $sender.FindForm()
+        $shown = 0.0
+        if ($null -ne $owner -and $null -ne $owner.Tag) {
+            $shown = [double] $owner.Tag.ProgressShown
+        }
+        if ($shown -lt 0) { $shown = 0 }
+        if ($shown -gt 1) { $shown = 1 }
+        $trackBounds = New-Object System.Drawing.Rectangle(0, 0, [Math]::Max(1, $sender.Width - 1), [Math]::Max(1, $sender.Height - 1))
+        $trackPath = New-RoundedPath $trackBounds 3
+        $trackBrush = New-Object System.Drawing.SolidBrush $script:ColorCard
+        $g.FillPath($trackBrush, $trackPath)
+        $fillW = [int] ($sender.Width * $shown)
+        if ($fillW -gt 2) {
+            $fillBounds = New-Object System.Drawing.Rectangle(0, 0, $fillW, [Math]::Max(1, $sender.Height - 1))
+            $fillPath = New-RoundedPath $fillBounds 3
+            $fillBrush = New-Object System.Drawing.SolidBrush $script:ColorAccent
+            $g.FillPath($fillBrush, $fillPath)
+            $fillBrush.Dispose()
+            $fillPath.Dispose()
+        }
+        $trackBrush.Dispose()
+        $trackPath.Dispose()
+    })
+
     $shortcutLink = New-Object System.Windows.Forms.Label
     $shortcutLink.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9)
     $shortcutLink.ForeColor = $script:ColorMuted
@@ -1026,7 +1140,7 @@ function New-LibraryForm {
         param($sender, $e)
         if ($sender.Enabled) {
             $sender.BackColor = $script:ColorAccent
-            $sender.ForeColor = [System.Drawing.Color]::White
+            $sender.ForeColor = [System.Drawing.Color]::Black
         } else {
             $sender.BackColor = $script:ColorCardEdge
             $sender.ForeColor = $script:ColorMuted
@@ -1065,6 +1179,11 @@ function New-LibraryForm {
         StatusLine = $statusLine
         DetailsLink = $detailsLink
         Log = $log
+        Progress = $progress
+        ProgressShown = 0.0
+        ProgressTarget = 0.0
+        ProgressSteps = 1
+        Busy = $false
         DetailsOpen = $false
         MarkImage = $markImage
         MarkStream = $markStream
@@ -1109,14 +1228,14 @@ function New-LibraryForm {
                 Add-DesktopShortcut
                 Write-Log $log 'Added a desktop shortcut. It opens the latest installer.'
             }
+            if (Test-DesktopShortcut) {
+                Set-HubStatus $form 'Desktop shortcut added.' 'ok'
+            } else {
+                Set-HubStatus $form 'Desktop shortcut removed.' 'ok'
+            }
         } catch {
             Write-Log $log $_.Exception.Message
-            [System.Windows.Forms.MessageBox]::Show(
-                $form,
-                $_.Exception.Message,
-                'Desktop shortcut failed',
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+            Set-HubStatus $form $_.Exception.Message 'error'
         }
         Update-ShortcutLink $shortcutLink
         Update-LibraryLayout $form
@@ -1132,51 +1251,44 @@ function New-LibraryForm {
     $uninstallButton.Add_Click({
         Update-PluginCardStatus $form
         if (Test-ClientRunning) {
-            [System.Windows.Forms.MessageBox]::Show(
-                $form,
-                'Close the game client first so the plugin files can be deleted.',
-                'Client is running',
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+            $form.Tag.Warning.Visible = $true
+            Update-LibraryLayout $form
+            Set-HubStatus $form 'Close the game client first. Uninstall will wait until it closes.' 'wait'
+            Write-Log $log 'Uninstall is waiting for the game client to close.'
             return
         }
+        $names = @(Get-CheckedJarNames $form)
+        $present = @($names | Where-Object { (Get-InstalledCopy $_).Count -gt 0 })
+        if ($present.Count -eq 0) {
+            Write-Log $log 'None of the selected plugins are installed.'
+            Set-HubStatus $form 'None of the selected plugins are installed.' 'idle'
+            return
+        }
+        $form.Tag.Busy = $true
         try {
-            $names = @(Get-CheckedJarNames $form)
-            $present = @($names | Where-Object { (Get-InstalledCopy $_).Count -gt 0 })
-            if ($present.Count -eq 0) {
-                Write-Log $log 'None of the selected plugins are installed.'
-                [System.Windows.Forms.MessageBox]::Show(
-                    $form,
-                    'None of the selected plugins are installed.',
-                    'Already uninstalled',
-                    [System.Windows.Forms.MessageBoxButtons]::OK,
-                    [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
-                return
-            }
-            $removed = @(Uninstall-Library $names)
+            Show-HubProgress $form $names.Count
+            $removed = @(Uninstall-Library $names {
+                param($step, $total, $jarName)
+                Set-HubStatus $form ("Removing $(Get-PluginLabel $jarName)") 'busy'
+                Advance-HubProgress $form ($step / [Math]::Max(1, $total))
+            })
             foreach ($path in $removed) { Write-Log $log "Uninstalled: $path" }
             Write-Log $log 'Other plugins were left in place.'
-            [System.Windows.Forms.MessageBox]::Show(
-                $form,
-                "Uninstalled $($removed.Count) file(s). Other plugins were left in place.",
-                'Uninstalled',
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+            Complete-HubProgress $form
+            Set-HubStatus $form "Uninstalled $($removed.Count) file(s). Other plugins were left in place." 'ok'
         } catch {
+            Hide-HubProgress $form
             Write-Log $log $_.Exception.Message
-            [System.Windows.Forms.MessageBox]::Show(
-                $form,
-                $_.Exception.Message,
-                'Uninstall failed',
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+            Set-HubStatus $form $_.Exception.Message 'error'
+        } finally {
+            $form.Tag.Busy = $false
+            Update-PluginCardStatus $form
         }
-        Update-PluginCardStatus $form
     }.GetNewClosure())
 
     $header.Controls.AddRange(@($mark, $title, $subtitle, $teamLabel, $githubLink, $microbotLink))
     $form.Controls.AddRange(@(
-        $header, $warning, $selectAll, $clearSelection, $list, $statusLine, $detailsLink, $log,
+        $header, $warning, $selectAll, $clearSelection, $list, $statusLine, $detailsLink, $progress, $log,
         $shortcutLink, $uninstallButton, $closeButton, $installButton
     ))
     Update-LibraryLayout $form
@@ -1184,8 +1296,26 @@ function New-LibraryForm {
     $timer = New-Object System.Windows.Forms.Timer
     $timer.Interval = 1500
     $timer.Add_Tick({
+        if ($form.Tag.Busy) { return }
         Update-PluginCardStatus $form
         Invoke-AutomaticUpdates $form $log
+    }.GetNewClosure())
+    $motion = New-Object System.Windows.Forms.Timer
+    $motion.Interval = 16
+    $motion.Add_Tick({
+        $cards = $form.Tag.Cards
+        if ($null -ne $cards) {
+            foreach ($card in $cards) {
+                $target = if ($card.Tag.Checked) { 1.0 } else { 0.0 }
+                $current = [double] $card.Tag.Knob
+                if ([Math]::Abs($current - $target) -gt 0.015) {
+                    $next = $current + (($target - $current) * 0.28)
+                    if ([Math]::Abs($next - $target) -lt 0.02) { $next = $target }
+                    $card.Tag.Knob = $next
+                    $card.Invalidate()
+                }
+            }
+        }
     }.GetNewClosure())
     $form.Add_Shown({
         Update-LibraryLayout $form
@@ -1195,18 +1325,22 @@ function New-LibraryForm {
             Update-ExistingShortcutIcon
         }
         Update-ShortcutLink $shortcutLink
-        Write-Log $log 'Choose the plugins you want. Unchecked plugins are left alone.'
+        Write-Log $log 'Turn on the plugins you want. Turned off plugins are left alone.'
         if (Test-DesktopShortcut) {
             Write-Log $log 'Desktop shortcut is on the desktop.'
         } else {
             Write-Log $log 'Add a desktop shortcut if you want to open this installer later.'
         }
+        Set-HubStatus $form 'Turn on the plugins you want.' 'idle'
         Invoke-AutomaticUpdates $form $log
         $timer.Start()
+        $motion.Start()
     }.GetNewClosure())
     $null = $form.Add_FormClosed({
         $timer.Stop()
         $timer.Dispose()
+        $motion.Stop()
+        $motion.Dispose()
         if ($null -ne $form.Icon) { $form.Icon.Dispose() }
         if ($null -ne $form.Tag.IconStream) { $form.Tag.IconStream.Dispose() }
         if ($null -ne $form.Tag.MarkImage) { $form.Tag.MarkImage.Dispose() }
@@ -1239,6 +1373,10 @@ function Show-LibrarySetup {
         $form = New-LibraryForm
         [void] $form.ShowDialog()
         $form.Dispose()
+        if ($null -ne $script:TitleFontCollection) {
+            $script:TitleFontCollection.Dispose()
+            $script:TitleFontCollection = $null
+        }
     } catch {
         [System.Windows.Forms.MessageBox]::Show(
             $_.Exception.Message,

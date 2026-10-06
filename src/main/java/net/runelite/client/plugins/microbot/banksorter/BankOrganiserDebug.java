@@ -47,7 +47,7 @@ final class BankOrganiserDebug {
         if (!verbose) {
             return;
         }
-        info(message);
+        lines.add(message);
     }
 
     void snapshot(List<BankSortItem> items, String label) {

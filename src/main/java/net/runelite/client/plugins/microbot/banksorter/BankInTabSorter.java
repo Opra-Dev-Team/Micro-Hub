@@ -3,6 +3,7 @@ package net.runelite.client.plugins.microbot.banksorter;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.Global;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
+import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 import java.awt.Rectangle;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -71,7 +72,7 @@ final class BankInTabSorter {
             } else {
                 script.recordMove();
             }
-            Global.sleep(script.moveDelay());
+            script.pauseAfterMove();
         }
         return true;
     }
@@ -86,17 +87,16 @@ final class BankInTabSorter {
             if (sourceSlot == targetSlot) {
                 return true;
             }
-            if (!scrollToSlot(sourceSlot)) {
+            if (!revealSlot(sourceSlot, desired.getId())) {
                 continue;
             }
-            Global.sleep(80);
             Rectangle from = itemBounds(sourceSlot, desired.getId());
             Rectangle to = itemBounds(targetSlot, -1);
             if (from == null || to == null) {
                 continue;
             }
             Microbot.drag(from, to);
-            boolean ok = Global.sleepUntil(() ->
+            boolean ok = BankTabMover.waitUntil(() ->
                     itemIdAtSlot(targetSlot) == desired.getId(), 4000);
             if (ok) {
                 return true;
@@ -148,6 +148,20 @@ final class BankInTabSorter {
             Rectangle bounds = item.getBounds();
             return bounds == null ? null : new Rectangle(bounds);
         }).orElse(null);
+    }
+
+    private static boolean revealSlot(int slot, int itemId) {
+        Rectangle bounds = itemBounds(slot, itemId);
+        if (bounds != null && Rs2UiHelper.isRectangleWithinCanvas(bounds)) {
+            return true;
+        }
+        if (!scrollToSlot(slot)) {
+            return false;
+        }
+        if (!OrganizeOptions.current().fast()) {
+            Global.sleep(80);
+        }
+        return true;
     }
 
     private static boolean scrollToSlot(int slot) {

@@ -57,9 +57,19 @@ public class BankSorterScript extends Script {
     }
 
     int moveDelay() {
+        if (OrganizeOptions.current().fast()) {
+            return 0;
+        }
         int min = Math.min(config.minMoveDelayMs(), config.maxMoveDelayMs());
         int max = Math.max(config.minMoveDelayMs(), config.maxMoveDelayMs());
         return Rs2Random.betweenInclusive(min, max);
+    }
+
+    void pauseAfterMove() {
+        int delay = moveDelay();
+        if (delay > 0) {
+            sleep(delay);
+        }
     }
 
     void recordMove() {
@@ -231,7 +241,7 @@ public class BankSorterScript extends Script {
             if (moved) {
                 done++;
                 failCount.remove(next.getId());
-                sleep(moveDelay());
+                pauseAfterMove();
             } else {
                 int f = failCount.getOrDefault(next.getId(), 0) + 1;
                 if (f >= MAX_ITEM_FAILURES) {
@@ -242,7 +252,7 @@ public class BankSorterScript extends Script {
                     failCount.put(next.getId(), f);
                     debug.info("Move failed for " + next.getOriginalName() + " (attempt " + f + ")");
                 }
-                sleep(400);
+                sleep(OrganizeOptions.current().fast() ? 50 : 400);
             }
         }
     }
@@ -275,7 +285,7 @@ public class BankSorterScript extends Script {
                 break;
             }
             done++;
-            sleep(moveDelay());
+            pauseAfterMove();
             items = BankTabMover.snapshot();
         }
     }

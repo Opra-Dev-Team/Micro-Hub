@@ -3,21 +3,15 @@ package net.runelite.client.plugins.microbot.opramotherlode;
 import java.awt.Rectangle;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.AnimationID;
 import net.runelite.api.EquipmentInventorySlot;
-import net.runelite.api.GameObject;
 import net.runelite.api.Perspective;
-import net.runelite.api.Skill;
 import net.runelite.api.TileObject;
-import net.runelite.api.WallObject;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldArea;
 import net.runelite.api.coords.WorldPoint;
@@ -27,12 +21,13 @@ import net.runelite.api.gameval.VarbitID;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.api.player.Rs2PlayerCache;
+import net.runelite.client.plugins.microbot.api.player.models.Rs2PlayerModel;
 import net.runelite.client.plugins.microbot.api.tileobject.Rs2TileObjectCache;
 import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
 import net.runelite.client.plugins.microbot.opramotherlode.enums.MLMMiningSpot;
+import net.runelite.client.plugins.microbot.opramotherlode.enums.MLMMiningSpotList;
 import net.runelite.client.plugins.microbot.opramotherlode.enums.MLMStatus;
 import net.runelite.client.plugins.microbot.opramotherlode.enums.Pickaxe;
-import net.runelite.client.plugins.microbot.util.Rs2InventorySetup;
 import net.runelite.client.plugins.microbot.util.antiban.AntibanPlugin;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2Antiban;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2AntibanSettings;
@@ -51,12 +46,22 @@ import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.tile.Rs2Tile;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
+import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
 
 @Slf4j
 public class OpraMotherlodeScript extends Script
 {
 
     private static final int SPOT_VEIN_RADIUS = 2;
+    private static final int SPINNING_WATER_WHEEL = 26671;
+    private static final int STOPPED_WATER_WHEEL = 26672;
+    private static final int OCCUPIED_VEIN_RADIUS = 4;
+    private static final int VEIN_CLICK_TIMEOUT_MS = 2_000;
+    private static final int STUCK_VEIN_IDLE_MS = 4_000;
+    private static final int GEM_BAG_OPEN_TIMEOUT_MS = 2_000;
+    private static final int ROCKFALL_RANGE = 12;
+    private static final int ROCKFALL_A = 26679;
+    private static final int ROCKFALL_B = 26680;
 
 	private static final WorldPoint HOPPER_DEPOSIT_DOWN = new WorldPoint(3748, 5672, 0);
 	private static final WorldPoint HOPPER_DEPOSIT_UP = new WorldPoint(3755, 5677, 0);
@@ -77,7 +82,8 @@ public class OpraMotherlodeScript extends Script
     volatile MLMStatus status = MLMStatus.IDLE;
     volatile MLMMiningSpot miningSpot = MLMMiningSpot.IDLE;
     private WorldPoint activeStandTile;
-    private int maxSackSize;
+    private WorldPoint miningVeinTile;
+    private long idleAtVeinSince;
 	private List<String> itemsToKeep;
 
 	private final OpraMotherlodePlugin plugin;
@@ -86,14 +92,13 @@ public class OpraMotherlodeScript extends Script
     private final Rs2PlayerCache rs2PlayerCache;
 
 
-	private boolean shouldEmptySack = false;
 	private boolean shouldRepairWaterwheel = false;
+	private int wheelRepairMisses = 0;
 	private boolean emptySackWorkflowActive = false;
 	private int cameraTurnedTowardId;
 	private boolean turnedCameraThisCall;
-	private long idleSince = 0;
-	private int idleThreshold = 0;
 	private boolean pickedUpHammer = false;
+	private List<MinerSnapshot> nearbyMiners = new ArrayList<>();
     private MLMStatus lastLoggedStatus = null;
 
 	@Inject
@@ -125,11 +130,12 @@ public class OpraMotherlodeScript extends Script
         status = MLMStatus.IDLE;
         miningSpot = MLMMiningSpot.IDLE;
         activeStandTile = null;
+        miningVeinTile = null;
+        idleAtVeinSince = 0;
         lastLoggedStatus = null;
-        idleSince = 0;
-        idleThreshold = 0;
-        shouldEmptySack = false;
         shouldRepairWaterwheel = false;
+        wheelRepairMisses = 0;
+        nearbyMiners = new ArrayList<>();
         emptySackWorkflowActive = false;
         cameraTurnedTowardId = 0;
         turnedCameraThisCall = false;
@@ -180,7 +186,6 @@ public class OpraMotherlodeScript extends Script
                 emptySack();
                 break;
             case FIXING_WATERWHEEL:
-                if (Rs2Player.isAnimating()) return;
                 fixWaterwheel();
                 break;
             case DEPOSIT_HOPPER:
@@ -203,10 +208,9 @@ public class OpraMotherlodeScript extends Script
 
     private void determineStatusFromInventory()
     {
-        updateSackSize();
         if (!hasRequiredTools())
         {
-            log.info("Missing required tools, running inventory setup");
+            log.info("Missing pickaxe, withdrawing one from the bank");
             setupInventory();
             return;
         }
@@ -237,17 +241,10 @@ public class OpraMotherlodeScript extends Script
 
     private boolean sackNeedsEmpty()
     {
-        int sack = currentSackCount();
-        if (sack >= SACK_SIZE) {
-            return true;
+        if (emptySackWorkflowActive) {
+            return currentSackCount() > 0 || hasOreInInventory();
         }
-        if (sack >= SACK_SIZE - 28 && payDirtCount() == 0) {
-            return true;
-        }
-        if (hasOreInInventory() || (shouldEmptySack && !Rs2Inventory.contains(ItemID.PAYDIRT))) {
-            return true;
-        }
-        return emptySackWorkflowActive && (sack > 0 || hasOreInInventory());
+        return currentSackCount() >= SACK_SIZE;
     }
 
     private boolean hasRequiredTools()
@@ -255,24 +252,28 @@ public class OpraMotherlodeScript extends Script
 		return Pickaxe.hasItem();
     }
 
-    private void updateSackSize()
-    {
-        maxSackSize = SACK_SIZE;
-    }
-
 	private void handleMining()
 	{
-		if (Rs2Player.getAnimation() != net.runelite.api.AnimationID.IDLE || Rs2Player.isMoving()) {
-			idleSince = 0;
+		if (Rs2Player.getAnimation() != AnimationID.IDLE || AntibanPlugin.isMining()) {
+			idleAtVeinSince = 0;
 			return;
 		}
-		if (idleSince == 0) {
-			idleSince = System.currentTimeMillis();
-			idleThreshold = Math.max(2000, Rs2Random.randomGaussian(3000, 600));
+		if (Rs2Player.isMoving()) {
 			return;
 		}
-		if (System.currentTimeMillis() - idleSince < idleThreshold) return;
-		idleSince = 0;
+		if (stillMiningTrackedVein()) {
+			if (idleAtVeinSince == 0) {
+				idleAtVeinSince = System.currentTimeMillis();
+			}
+			if (System.currentTimeMillis() - idleAtVeinSince < STUCK_VEIN_IDLE_MS) {
+				return;
+			}
+			miningVeinTile = null;
+			idleAtVeinSince = 0;
+		} else if (miningVeinTile != null) {
+			miningVeinTile = null;
+			idleAtVeinSince = 0;
+		}
 
 		if (Rs2Gembag.isUnknown()) {
 			Rs2Gembag.checkGemBag();
@@ -289,9 +290,17 @@ public class OpraMotherlodeScript extends Script
 			return;
 		}
 
+		refreshNearbyMiners();
+
 		if (findClosestVein() != null)
 		{
 			attemptToMineVein();
+			return;
+		}
+
+		if (spotHasOnlyOccupiedVeins())
+		{
+			handleOccupiedSpot();
 			return;
 		}
 
@@ -371,7 +380,7 @@ public class OpraMotherlodeScript extends Script
 		}
 		if (stillOffScreen(sack))
 		{
-			Rs2Walker.walkTo(objectTile(sack, SACK_TILE), 2);
+			walkToward(objectTile(sack, SACK_TILE), 2);
 		}
 	}
 
@@ -390,8 +399,10 @@ public class OpraMotherlodeScript extends Script
 
 	private void completeEmptySackWorkflow()
 	{
-		shouldEmptySack = false;
-		shouldRepairWaterwheel = false;
+		if (!waterwheelNeedsRepair())
+		{
+			shouldRepairWaterwheel = false;
+		}
 		emptySackWorkflowActive = false;
 		Rs2Antiban.takeMicroBreakByChance();
 		status = MLMStatus.IDLE;
@@ -451,14 +462,34 @@ public class OpraMotherlodeScript extends Script
     }
 
     private void fixWaterwheel() {
-        log.info("Fixing waterwheel workflow started");
-        ensureLowerFloor();
-
-        if (getBrokenStrutCount() == 0) {
+        if (!waterwheelNeedsRepair()) {
             shouldRepairWaterwheel = false;
-            log.info("Waterwheel has no broken struts");
+            wheelRepairMisses = 0;
+            log.info("Water wheels are spinning");
             return;
         }
+
+        List<Rs2TileObjectModel> broken = brokenStruts();
+        if (broken.isEmpty()) {
+            wheelRepairMisses++;
+            if (wheelRepairMisses >= 2) {
+                shouldRepairWaterwheel = false;
+                wheelRepairMisses = 0;
+                log.debug("Stopped water wheel has no broken strut to hammer");
+            }
+            return;
+        }
+
+        wheelRepairMisses = 0;
+        if (isUpperFloor()) {
+            ensureLowerFloor();
+            if (isUpperFloor()) {
+                return;
+            }
+        }
+
+        status = MLMStatus.FIXING_WATERWHEEL;
+        log.info("Fixing stopped water wheel, brokenStruts={}", broken.size());
 
 		if (!hasHammer()) {
 			if (!obtainHammer()) return;
@@ -471,8 +502,7 @@ public class OpraMotherlodeScript extends Script
                 return;
             }
 
-			final int skillExp = Microbot.getClientThread().invoke(() -> Microbot.getClient().getSkillExperience(Skill.SMITHING));
-			sleepUntilTrue(() -> skillExp != Microbot.getClientThread().invoke(() -> Microbot.getClient().getSkillExperience(Skill.SMITHING)) || getBrokenStrutCount() < brokenBefore, 250, 20_000);
+			sleepUntil(() -> getBrokenStrutCount() < brokenBefore, 8_000);
             if (getBrokenStrutCount() >= brokenBefore) {
                 log.debug("Strut repair made no progress, retrying next loop");
                 return;
@@ -492,7 +522,12 @@ public class OpraMotherlodeScript extends Script
         if (Rs2Inventory.isFull() && (Rs2Gembag.hasGemBag() && !Rs2Gembag.isGemBagOpen()))
         {
 			Rs2Inventory.interact("gem bag", "open");
-			sleepUntil(Rs2Gembag::isGemBagOpen);
+			sleepUntil(Rs2Gembag::isGemBagOpen, GEM_BAG_OPEN_TIMEOUT_MS);
+			if (!Rs2Gembag.isGemBagOpen())
+			{
+				log.debug("Gem bag did not open");
+				return;
+			}
             Rs2Inventory.interact("gem bag", "fill");
             if (!Rs2Inventory.isFull())
             {
@@ -515,21 +550,23 @@ public class OpraMotherlodeScript extends Script
             sleepUntil(() -> payDirtCount() != paydirtToDeposit && !Rs2Player.isAnimating(), 10_000);
 
             if (config.fixWaterwheel() && payDirtCount() != paydirtToDeposit) {
-                shouldRepairWaterwheel = true;
+                if (waterwheelNeedsRepair()) {
+                    log.info("Water wheel is stopped after deposit");
+                    shouldRepairWaterwheel = true;
+                    fixWaterwheel();
+                } else {
+                    shouldRepairWaterwheel = false;
+                    log.debug("Water wheels still spinning after deposit");
+                }
             }
 
-            // Calculate the effective sack size after deposit as VarbitID.MOTHERLODE_SACK_TRANSMIT takes time to update
-            final int currentSackAmount = currentSackCount();
-            final int effectiveSackAmount = Math.max(currentSackAmount, Math.min(maxSackSize, currentSackAmount + paydirtToDeposit));
-
-			shouldEmptySack = effectiveSackAmount >= (maxSackSize - 28);
-            log.debug("Hopper deposit complete: paydirtDeposited={}, effectiveSackAmount={}, shouldEmptySack={}",
-                    paydirtToDeposit, effectiveSackAmount, shouldEmptySack);
+            log.debug("Hopper deposit complete: paydirtDeposited={}, sack={}/{}",
+                    paydirtToDeposit, currentSackCount(), SACK_SIZE);
         }
         else
         {
             log.debug("Hopper unavailable, walking closer to deposit point");
-            Rs2Walker.walkTo(hopperDeposit, 15);
+            walkToward(hopperDeposit, 15);
         }
     }
 
@@ -542,7 +579,7 @@ public class OpraMotherlodeScript extends Script
             {
                 if (stillOffScreen(box))
                 {
-                    Rs2Walker.walkTo(objectTile(box, DEPOSIT_BOX_TILE), 2);
+                    walkToward(objectTile(box, DEPOSIT_BOX_TILE), 2);
                 }
                 return;
             }
@@ -559,13 +596,22 @@ public class OpraMotherlodeScript extends Script
             sleepUntil(() -> Rs2Gembag.getGemBagContents().stream().noneMatch(s -> s.getQuantity() > 30), 3000);
         }
 
-        List<String> keep = new ArrayList<>(getItemsToKeep());
-        if (!keep.contains("pay-dirt"))
+        if (config.useDepositAll())
         {
-            keep.add("pay-dirt");
+            if (Rs2Widget.clickWidget("Deposit inventory"))
+            {
+                Rs2Inventory.waitForInventoryChanges(5000);
+            }
+            else
+            {
+                log.debug("Deposit inventory button missing, depositing items individually");
+                depositAllExceptKept();
+            }
         }
-        Rs2DepositBox.depositAllExcept(keep, false);
-        Rs2Inventory.waitForInventoryChanges(5000);
+        else
+        {
+            depositAllExceptKept();
+        }
 
         Rectangle gameObjectBounds = getMotherloadSackBounds();
         Rectangle depositBoxBounds = Rs2DepositBox.getDepositBoxBounds();
@@ -642,87 +688,57 @@ public class OpraMotherlodeScript extends Script
     }
 
 	private void setupInventory() {
-        log.info("Running MLM inventory setup (useInventorySetup={})", config.useInventorySetup());
-		if (!config.useInventorySetup()) {
-			Rs2ItemModel pickaxe = Pickaxe.getBestPickaxe();
+        log.info("Withdrawing a pickaxe from the bank");
+		Rs2ItemModel pickaxe = Pickaxe.getBestPickaxe();
 
-			if (pickaxe == null) {
-				Rs2Bank.openBank();
-				sleepUntil(Rs2Bank::isOpen);
+		if (pickaxe != null) {
+			return;
+		}
 
-				pickaxe = Pickaxe.getBestPickaxeFromBank();
-				if (pickaxe == null) {
-					Microbot.showMessage("No pickaxe found in bank or inventory. Please bank a pickaxe.");
-                    log.warn("No pickaxe found in bank or inventory, stopping plugin");
-					Microbot.stopPlugin(plugin);
-					return;
-				}
+		Rs2Bank.openBank();
+		sleepUntil(Rs2Bank::isOpen);
 
-				if (Rs2Inventory.isFull()) {
-					Rs2Bank.depositAll();
-				}
+		pickaxe = Pickaxe.getBestPickaxeFromBank();
+		if (pickaxe == null) {
+			Microbot.showMessage("No pickaxe found in bank or inventory. Please bank a pickaxe.");
+			log.warn("No pickaxe found in bank or inventory, stopping plugin");
+			Microbot.stopPlugin(plugin);
+			return;
+		}
 
-				// Only equip if it has attack requirements, otherwise keep in inventory
-				if (Pickaxe.hasAttackLevelRequirement(pickaxe.getId())) {
-					final Rs2ItemModel currentWeapon = Rs2Equipment.get(EquipmentInventorySlot.WEAPON);
-					final Rs2ItemModel _pickaxe = pickaxe;
-					Rs2Bank.withdrawAndEquip(_pickaxe.getId());
-					sleepUntil(() -> Rs2Equipment.isWearing(_pickaxe.getId()));
-					if (currentWeapon != null) {
-						Rs2Bank.depositOne(currentWeapon.getId());
-						Rs2Inventory.waitForInventoryChanges(5000);
-					}
-				} else {
-					Rs2Bank.withdrawOne(pickaxe.getId());
-					Rs2Inventory.waitForInventoryChanges(5000);
-				}
+		if (Rs2Inventory.isFull()) {
+			Rs2Bank.depositAll();
+		}
 
-				// Get gem bag and hammer
-				final int[] gemBagIDs = {ItemID.GEM_BAG, ItemID.GEM_BAG_OPEN};
-				for (int gemBagID : gemBagIDs) {
-					if (!isRunning()) break;
-					if (Rs2Bank.withdrawOne(gemBagID)) {
-						Rs2Inventory.waitForInventoryChanges(5000);
-						break;
-					}
-				}
-
-				if (Rs2Random.dicePercentage(10) && !hasHammer()) {
-					if (Rs2Bank.withdrawOne("hammer")) {
-						Rs2Inventory.waitForInventoryChanges(5000);
-					}
-				}
-
-				Rs2Bank.toggleItemLock("pickaxe", false);
-				Rs2Bank.toggleItemLock("hammer", false);
-				Rs2Bank.toggleItemLock("gem bag", false);
+		if (Pickaxe.hasAttackLevelRequirement(pickaxe.getId())) {
+			final Rs2ItemModel currentWeapon = Rs2Equipment.get(EquipmentInventorySlot.WEAPON);
+			final Rs2ItemModel _pickaxe = pickaxe;
+			Rs2Bank.withdrawAndEquip(_pickaxe.getId());
+			sleepUntil(() -> Rs2Equipment.isWearing(_pickaxe.getId()));
+			if (currentWeapon != null) {
+				Rs2Bank.depositOne(currentWeapon.getId());
+				Rs2Inventory.waitForInventoryChanges(5000);
 			}
-
 		} else {
-			Rs2InventorySetup mlmInventorySetup = new Rs2InventorySetup(config.getInventorySetup(), mainScheduledFuture);
-			boolean doesEquipmentMatch = true;
-			boolean doesInventoryMatch = true;
+			Rs2Bank.withdrawOne(pickaxe.getId());
+			Rs2Inventory.waitForInventoryChanges(5000);
+		}
 
-			if (!mlmInventorySetup.doesEquipmentMatch()) {
-				doesEquipmentMatch = mlmInventorySetup.loadEquipment();
-			}
-
-			if (!mlmInventorySetup.doesInventoryMatch()) {
-				doesInventoryMatch = mlmInventorySetup.loadInventory();
-			}
-
-			if (!doesEquipmentMatch || !doesInventoryMatch) {
-				Microbot.showMessage("Failed to load inventory setup. Please check your settings.");
-                log.warn("Inventory setup failed (equipmentMatch={}, inventoryMatch={}), stopping plugin",
-                        doesEquipmentMatch, doesInventoryMatch);
-				Microbot.stopPlugin(plugin);
-				return;
+		final int[] gemBagIDs = {ItemID.GEM_BAG, ItemID.GEM_BAG_OPEN};
+		for (int gemBagID : gemBagIDs) {
+			if (!isRunning()) break;
+			if (Rs2Bank.withdrawOne(gemBagID)) {
+				Rs2Inventory.waitForInventoryChanges(5000);
+				break;
 			}
 		}
 
+		Rs2Bank.toggleItemLock("pickaxe", false);
+		Rs2Bank.toggleItemLock("gem bag", false);
+
 		Rs2Bank.closeBank();
 		sleepUntil(() -> !Rs2Bank.isOpen());
-        log.info("Inventory setup complete");
+        log.info("Pickaxe withdraw complete");
 	}
 
     private void selectMiningSpotFromConfig() {
@@ -787,6 +803,59 @@ public class OpraMotherlodeScript extends Script
         });
     }
 
+    private boolean walkToward(WorldPoint destination, int radius)
+    {
+        if (destination == null) {
+            return false;
+        }
+        Rs2TileObjectModel rockfall = blockingRockfall(destination);
+        if (rockfall != null) {
+            WorldPoint tile = rockfall.getWorldLocation();
+            log.info("Mining rockfall at {}", tile);
+            if (!rockfall.click("Mine")) {
+                Rs2Walker.walkTo(tile, 2);
+                return false;
+            }
+            sleepUntil(() -> !rockfallAt(tile), 8_000);
+        }
+        return Rs2Walker.walkTo(destination, radius);
+    }
+
+    private Rs2TileObjectModel blockingRockfall(WorldPoint destination)
+    {
+        WorldPoint here = playerLocation();
+        if (here == null || destination == null) {
+            return null;
+        }
+        int playerToDestination = here.distanceTo(destination);
+        return rs2TileObjectCache.query().where(object -> {
+            if (!isRockfall(object.getId())) {
+                return false;
+            }
+            WorldPoint location = object.getWorldLocation();
+            if (location == null || here.distanceTo(location) > ROCKFALL_RANGE) {
+                return false;
+            }
+            return location.distanceTo(destination) < playerToDestination;
+        }).nearestOnClientThread();
+    }
+
+    private boolean rockfallAt(WorldPoint tile)
+    {
+        if (tile == null) {
+            return false;
+        }
+        return rs2TileObjectCache.query().where(object -> {
+            WorldPoint location = object.getWorldLocation();
+            return location != null && location.equals(tile) && isRockfall(object.getId());
+        }).firstOnClientThread() != null;
+    }
+
+    private boolean isRockfall(int id)
+    {
+        return id == ROCKFALL_A || id == ROCKFALL_B;
+    }
+
     private boolean walkToMiningSpot()
     {
         WorldPoint target = miningSpotTile();
@@ -806,12 +875,16 @@ public class OpraMotherlodeScript extends Script
             return false; // Wait until we've gone down
         }
 
-        return Rs2Walker.walkTo(target, 2);
+        return walkToward(target, 2);
     }
 
 	private boolean attemptToMineVein() {
         Rs2TileObjectModel vein = findClosestVein();
 		if (vein == null) {
+			if (spotHasOnlyOccupiedVeins()) {
+				handleOccupiedSpot();
+				return false;
+			}
 			repositionCameraAndMove();
 			return false;
 		}
@@ -835,7 +908,7 @@ public class OpraMotherlodeScript extends Script
 				{
 					return false;
 				}
-				Rs2Walker.walkTo(stand, 1);
+				walkToward(stand, 1);
 				return false;
 			}
 		}
@@ -845,10 +918,13 @@ public class OpraMotherlodeScript extends Script
 
 		if (!vein.click("Mine")) return false;
 
+		miningVeinTile = veinLocation;
+		idleAtVeinSince = 0;
+
 		return sleepUntil(() -> {
 			WorldPoint here = playerLocation();
 			return AntibanPlugin.isMining() && here != null && veinLocation.distanceTo(here) <= 2;
-		}, 10_000);
+		}, VEIN_CLICK_TIMEOUT_MS);
 	}
 
     private Rs2TileObjectModel findClosestVein()
@@ -859,7 +935,7 @@ public class OpraMotherlodeScript extends Script
     private boolean isValidVein(Rs2TileObjectModel wallObject)
     {
         int id = wallObject.getId();
-        boolean isVein = (id == 26661 || id == 26662 || id == 26663 || id == 26664);
+        boolean isVein = isLiveVeinId(id);
         if (!isVein) return false;
 
         WorldPoint location = wallObject.getWorldLocation();
@@ -867,7 +943,7 @@ public class OpraMotherlodeScript extends Script
             return false;
         }
 
-		if (miningSpot.isDownstairs() && config.useAntiCrash() && otherPlayerNear(location))
+		if (config.useAntiCrash() && veinOccupied(location))
 		{
 			return false;
 		}
@@ -902,27 +978,148 @@ public class OpraMotherlodeScript extends Script
         return nearest;
     }
 
-    private boolean otherPlayerNear(WorldPoint veinTile)
+    private boolean veinOccupied(WorldPoint veinTile)
     {
-        String localName = Microbot.getClientThread().invoke(() -> {
-            if (Microbot.getClient() == null || Microbot.getClient().getLocalPlayer() == null) {
-                return null;
-            }
-            return Microbot.getClient().getLocalPlayer().getName();
-        });
-        if (localName == null) {
+        if (!config.useAntiCrash() || veinTile == null || nearbyMiners == null)
+        {
             return false;
         }
-        return rs2PlayerCache.query().where(p -> {
-            if (p == null || p.getWorldLocation() == null) {
+        for (MinerSnapshot miner : nearbyMiners)
+        {
+            int distance = miner.tile.distanceTo(veinTile);
+            if (distance <= 1)
+            {
+                return true;
+            }
+            if (miner.animation != -1 && miner.animation != AnimationID.IDLE && distance <= OCCUPIED_VEIN_RADIUS)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void refreshNearbyMiners()
+    {
+        if (!config.useAntiCrash())
+        {
+            nearbyMiners = new ArrayList<>();
+            return;
+        }
+        List<MinerSnapshot> miners = Microbot.getClientThread().invoke(() -> {
+            var client = Microbot.getClient();
+            WorldPoint local = client != null && client.getLocalPlayer() != null
+                ? client.getLocalPlayer().getWorldLocation()
+                : null;
+            List<Rs2PlayerModel> players = rs2PlayerCache.query().toList();
+            List<MinerSnapshot> snapshots = new ArrayList<>();
+            if (players == null)
+            {
+                return snapshots;
+            }
+            for (Rs2PlayerModel player : players)
+            {
+                if (player == null)
+                {
+                    continue;
+                }
+                WorldPoint tile = player.getWorldLocation();
+                if (tile == null || (local != null && tile.equals(local)))
+                {
+                    continue;
+                }
+                snapshots.add(new MinerSnapshot(tile, player.getAnimation()));
+            }
+            return snapshots;
+        });
+        nearbyMiners = miners == null ? new ArrayList<>() : miners;
+    }
+
+    private boolean spotHasOnlyOccupiedVeins()
+    {
+        if (!config.useAntiCrash() || miningSpot.getWorldPoint() == null)
+        {
+            return false;
+        }
+        List<Rs2TileObjectModel> veins = rs2TileObjectCache.query().where(object -> {
+            int id = object.getId();
+            if (!isLiveVeinId(id))
+            {
                 return false;
             }
-            if (p.getWorldLocation().distanceTo(veinTile) > 2) {
+            WorldPoint location = object.getWorldLocation();
+            return location != null && belongsToSelectedSpot(location) && hasWalkableTilesAround(object);
+        }).toListOnClientThread();
+        if (veins == null || veins.isEmpty())
+        {
+            return false;
+        }
+        for (Rs2TileObjectModel vein : veins)
+        {
+            if (!veinOccupied(vein.getWorldLocation()))
+            {
                 return false;
             }
-            String name = p.getName();
-            return name != null && !name.equals(localName);
-        }).firstOnClientThread() != null;
+        }
+        return true;
+    }
+
+    private void handleOccupiedSpot()
+    {
+        if (config.miningArea() == MLMMiningSpotList.ANY)
+        {
+            selectAnotherMiningSpot();
+            return;
+        }
+        waitOffOccupiedSpot();
+    }
+
+    private void selectAnotherMiningSpot()
+    {
+        MLMMiningSpot previous = miningSpot;
+        MLMMiningSpot[] options = config.mineUpstairs()
+            ? new MLMMiningSpot[] { MLMMiningSpot.WEST_UPPER, MLMMiningSpot.EAST_UPPER }
+            : Arrays.stream(MLMMiningSpot.values())
+                .filter(spot -> spot.getWorldPoint() != null && spot.isDownstairs())
+                .toArray(MLMMiningSpot[]::new);
+        List<MLMMiningSpot> choices = new ArrayList<>();
+        for (MLMMiningSpot option : options)
+        {
+            if (option != previous)
+            {
+                choices.add(option);
+            }
+        }
+        if (choices.isEmpty())
+        {
+            return;
+        }
+        miningSpot = choices.get(ThreadLocalRandom.current().nextInt(choices.size()));
+        List<WorldPoint> points = miningSpot.getWorldPoint();
+        activeStandTile = points == null || points.isEmpty()
+            ? null
+            : points.get(ThreadLocalRandom.current().nextInt(points.size()));
+        log.info("Occupied mining spot {}, switching to {}", previous, miningSpot);
+    }
+
+    private void waitOffOccupiedSpot()
+    {
+        WorldPoint here = playerLocation();
+        WorldPoint stand = miningSpotTile();
+        if (here == null || stand == null || here.distanceTo(stand) > SPOT_VEIN_RADIUS)
+        {
+            return;
+        }
+        WorldPoint anchor = miningSpot.isUpstairs() ? HOPPER_DEPOSIT_UP : HOPPER_DEPOSIT_DOWN;
+        int stepX = Integer.signum(anchor.getX() - stand.getX());
+        int stepY = Integer.signum(anchor.getY() - stand.getY());
+        if (stepX == 0 && stepY == 0)
+        {
+            stepX = 1;
+        }
+        WorldPoint away = new WorldPoint(stand.getX() + stepX * 5, stand.getY() + stepY * 5, stand.getPlane());
+        log.debug("Mining spot {} is occupied, waiting off the rocks", miningSpot);
+        walkToward(away, 2);
     }
 
     private boolean hasWalkableTilesAround(Rs2TileObjectModel wallObject)
@@ -944,7 +1141,7 @@ public class OpraMotherlodeScript extends Script
 		if (localTarget != null) {
         	Rs2Camera.turnTo(localTarget);
 		}
-        Rs2Walker.walkTo(target, 2);
+        walkToward(target, 2);
     }
 
     private void goUp()
@@ -954,7 +1151,7 @@ public class OpraMotherlodeScript extends Script
 
 		Rs2TileObjectModel ladder = rs2TileObjectCache.query().withId(ObjectID.MOTHERLODE_LADDER_BOTTOM).nearestReachable();
 		if (ladder == null) {
-			Rs2Walker.walkTo(miningSpot.getWorldPoint().get(0), 6);
+			walkToward(miningSpot.getWorldPoint().get(0), 6);
 			return;
 		}
 
@@ -971,7 +1168,7 @@ public class OpraMotherlodeScript extends Script
 
 		Rs2TileObjectModel ladder = rs2TileObjectCache.query().withId(ObjectID.MOTHERLODE_LADDER_TOP).nearestReachable();
 		if (ladder == null) {
-			Rs2Walker.walkTo(HOPPER_DEPOSIT_DOWN, 6);
+			walkToward(HOPPER_DEPOSIT_DOWN, 6);
 			return;
 		}
 
@@ -1002,6 +1199,29 @@ public class OpraMotherlodeScript extends Script
     private void resetMiningState(boolean force)
     {
         miningSpot = (ThreadLocalRandom.current().nextBoolean() || force) ? MLMMiningSpot.IDLE : miningSpot;
+        miningVeinTile = null;
+        idleAtVeinSince = 0;
+    }
+
+    private boolean isLiveVeinId(int id)
+    {
+        return id == 26661 || id == 26662 || id == 26663 || id == 26664;
+    }
+
+    private boolean stillMiningTrackedVein()
+    {
+        if (miningVeinTile == null) {
+            return false;
+        }
+        WorldPoint here = playerLocation();
+        if (here == null || here.distanceTo(miningVeinTile) > 2) {
+            return false;
+        }
+        WorldPoint tracked = miningVeinTile;
+        return rs2TileObjectCache.query().where(object -> {
+            WorldPoint location = object.getWorldLocation();
+            return location != null && location.equals(tracked) && isLiveVeinId(object.getId());
+        }).firstOnClientThread() != null;
     }
 
 	private void resetMiningState()
@@ -1039,6 +1259,7 @@ public class OpraMotherlodeScript extends Script
             Rs2Inventory.waitForInventoryChanges(5_000);
             if (Rs2Inventory.hasItem("hammer")) {
                 pickedUpHammer = true;
+                itemsToKeep = null;
                 log.info("Hammer obtained from crate");
                 break;
             }
@@ -1072,8 +1293,52 @@ public class OpraMotherlodeScript extends Script
 	}
 
 	private int getBrokenStrutCount() {
-		List<Rs2TileObjectModel> brokenStruts = rs2TileObjectCache.query().where(o -> o.getId() == ObjectID.MOTHERLODE_WHEEL_STRUT_BROKEN).toListOnClientThread();
-		return brokenStruts.isEmpty() ? 0 : brokenStruts.size();
+		return brokenStruts().size();
+	}
+
+	private List<Rs2TileObjectModel> brokenStruts() {
+		List<Rs2TileObjectModel> broken = rs2TileObjectCache.query()
+			.where(o -> o.getId() == ObjectID.MOTHERLODE_WHEEL_STRUT_BROKEN)
+			.toListOnClientThread();
+		return broken == null ? new ArrayList<>() : broken;
+	}
+
+	private boolean waterwheelNeedsRepair() {
+		if (!brokenStruts().isEmpty()) {
+			return true;
+		}
+		List<Rs2TileObjectModel> wheels = rs2TileObjectCache.query()
+			.where(o -> o.getId() == SPINNING_WATER_WHEEL || o.getId() == STOPPED_WATER_WHEEL)
+			.toListOnClientThread();
+		if (wheels == null || wheels.isEmpty()) {
+			return false;
+		}
+		for (Rs2TileObjectModel wheel : wheels) {
+			if (wheel != null && wheel.getId() == STOPPED_WATER_WHEEL) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private void depositAllExceptKept() {
+		List<String> keep = new ArrayList<>(getItemsToKeep());
+		if (!keep.contains("pay-dirt"))
+		{
+			keep.add("pay-dirt");
+		}
+		Rs2DepositBox.depositAllExcept(keep, false);
+		Rs2Inventory.waitForInventoryChanges(5000);
+	}
+
+	private static final class MinerSnapshot {
+		private final WorldPoint tile;
+		private final int animation;
+
+		private MinerSnapshot(WorldPoint tile, int animation) {
+			this.tile = tile;
+			this.animation = animation;
+		}
 	}
 
 	private List<String> getItemsToKeep() {

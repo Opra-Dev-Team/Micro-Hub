@@ -350,6 +350,47 @@ class BankClassifierTest {
     }
 
     @Test
+    void falseFoodAndDrinkMatchesStayOutOfSupplies() {
+        assertEquals("Miscellaneous", item("Shark paint").getCategory());
+        assertEquals("Production-Glass", item("Beer glass").getCategory());
+        assertEquals("Farming-Secondary", item("Blue dragon scale").getCategory());
+        assertEquals("Food-Cooked", item("Nettle tea").getCategory());
+        assertHome("Herring", BankHomeTab.SUPPLIES);
+        assertHome("Shrimps", BankHomeTab.SUPPLIES);
+        assertHome("Cup of tea", BankHomeTab.SUPPLIES);
+    }
+
+    @Test
+    void uncookedFishGoesToGatheringUnlessPlacedWithFood() {
+        assertHome("Mackerel", BankHomeTab.GATHERING);
+        assertHome("Cod", BankHomeTab.GATHERING);
+        assertHome("Giant crab meat", BankHomeTab.GATHERING);
+        assertHome("Raw shark", BankHomeTab.GATHERING);
+
+        OrganizeOptions.use(OrganizeOptions.defaults().withRawFish(OrganizeOptions.RawFishHome.WITH_FOOD));
+        assertEquals("Food-Cooked", item("Mackerel").getCategory());
+        assertHome("Raw shark", BankHomeTab.SUPPLIES);
+        assertHome("Cod", BankHomeTab.SUPPLIES);
+    }
+
+    @Test
+    void leftoversLeaveJunkWhenEnabled() {
+        assertEquals("Farming-Seed", item("Mushroom spore").getCategory());
+        assertHome("Maple bird house", BankHomeTab.FARMING);
+        assertHome("Nettles", BankHomeTab.FARMING);
+        assertEquals("Production-Glass", item("Unpowered orb").getCategory());
+        assertEquals("Supplies-Other", item("Waterskin(4)").getCategory());
+        assertHome("Waterskin(4)", BankHomeTab.SUPPLIES);
+
+        OrganizeOptions.use(OrganizeOptions.defaults().withLeftovers(false));
+        assertHome("Mushroom spore", BankHomeTab.JUNK);
+        assertHome("Maple bird house", BankHomeTab.JUNK);
+        assertHome("Nettles", BankHomeTab.JUNK);
+        assertHome("Unpowered orb", BankHomeTab.JUNK);
+        assertHome("Waterskin(4)", BankHomeTab.JUNK);
+    }
+
+    @Test
     void metalsSortAheadOfUntieredArmour() {
         List<BankSortItem> sorted = BankInTabSorter.sortItems(Arrays.asList(
                 item("Coif"),

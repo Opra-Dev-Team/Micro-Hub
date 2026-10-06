@@ -5,7 +5,6 @@ import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigInformation;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigSection;
-import net.runelite.client.plugins.microbot.inventorysetups.InventorySetup;
 import net.runelite.client.plugins.microbot.opramotherlode.enums.MLMMiningSpotList;
 
 @ConfigGroup(OpraMotherlodeConfig.configGroup)
@@ -18,8 +17,6 @@ public interface OpraMotherlodeConfig extends Config
 {
 	String configGroup = "opra-motherlode";
 
-	String useInventorySetup = "useInventorySetup";
-	String inventorySetup = "inventory-setup";
 	String useDepositAll = "useDepositAll";
 	String antiCrash = "antiCrash";
 	String dropGems = "dropGems";
@@ -43,35 +40,10 @@ public interface OpraMotherlodeConfig extends Config
 	String featureSection = "features";
 
 	@ConfigItem(
-		keyName = useInventorySetup,
-		name = "Enable Inventory Setup",
-		description = "Enable this option to use an inventory setup with the plugin",
-		position = 0,
-		section = generalSection
-	)
-	default boolean useInventorySetup()
-	{
-		return false;
-	}
-
-	@ConfigItem(
-		keyName = inventorySetup,
-		name = "Inventory Setup",
-		description = "Select the inventory setup to use with the plugin",
-		position = 1,
-		section = generalSection
-	)
-	default InventorySetup getInventorySetup()
-	{
-		return null;
-	}
-
-	@ConfigItem(
 		keyName = useDepositAll,
 		name = "Use Deposit All",
-		description = "Uses deposit all button in the deposit box<br>" +
-			"Note: ensure you enable locked slots enabled for the items you want to keep in your inventory",
-		position = 2,
+		description = "Clicks Deposit inventory in the deposit box. Lock the slots you want to keep. When off, pay-dirt is deposited and the pickaxe, hammer, and gem bag stay.",
+		position = 0,
 		section = generalSection
 	)
 	default boolean useDepositAll()
@@ -82,8 +54,8 @@ public interface OpraMotherlodeConfig extends Config
 	@ConfigItem(
 		keyName = antiCrash,
 		name = "Anti Crash",
-		description = "Avoids other players when mining in the lower level",
-		position = 3,
+		description = "Skips rocks other players are mining, on both floors",
+		position = 1,
 		section = generalSection
 	)
 	default boolean useAntiCrash()
@@ -95,7 +67,7 @@ public interface OpraMotherlodeConfig extends Config
 		keyName = dropGems,
 		name = "Drop Gems",
 		description = "Automatically drop gems while mining",
-		position = 4,
+		position = 2,
 		section = generalSection
 	)
 	default boolean dropGems()
@@ -107,7 +79,7 @@ public interface OpraMotherlodeConfig extends Config
 	@ConfigItem(
 		keyName = useUpstairsMine,
 		name = "Use Mine Upstairs",
-		description = "Should the plugin use the upstairs mining area",
+		description = "When Mining Area is Any, use the upper level. A specific Mining Area is used as selected.",
 		position = 0,
 		section = featureSection
 	)
@@ -120,7 +92,7 @@ public interface OpraMotherlodeConfig extends Config
 	@ConfigItem(
 		keyName = useUpstairsHopper,
 		name = "Use Upstairs Hopper",
-		description = "Should the plugin use the upstairs hopper",
+		description = "Deposit into the upstairs hopper while you are on the upper level",
 		position = 1,
 		section = featureSection
 	)
@@ -132,7 +104,7 @@ public interface OpraMotherlodeConfig extends Config
 	@ConfigItem(
 		keyName = fixWaterwheel,
 		name = "Fix Water Wheel",
-		description = "Repair broken struts after each hopper deposit",
+		description = "Repair a water wheel when it is stopped. A spinning wheel is left alone.",
 		position = 2,
 		section = featureSection
 	)

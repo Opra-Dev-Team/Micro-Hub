@@ -2,5 +2,6 @@ BankSorterPlugin.jar
 EclipseRedPlugin.jar
 FlaxPickerPlugin.jar
 MoltenGlassPlugin.jar
+OpraHouseThievingPlugin.jar
 OpraMotherlodePlugin.jar
 SandBuyerPlugin.jar

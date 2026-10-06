@@ -11,10 +11,10 @@ Mines paydirt in the Motherlode Mine. This plugin is standalone. It does not use
 
 The config group is `opra-motherlode`.
 
-- **Enable Inventory Setup** / **Inventory Setup**: optional gear from the inventory setups plugin.
-- **Use Deposit All**: deposit box uses deposit-all. Lock the slots you want to keep.
-- **Anti Crash**: avoid other players on the lower level.
+- **Use Deposit All**: clicks Deposit inventory in the deposit box. Lock the slots you want to keep. When this is off, pay-dirt is deposited and the pickaxe, hammer, and gem bag stay.
+- **Anti Crash**: skips rocks other players are mining, on both floors. When Mining Area is Any and the current spot is full, another spot is chosen. A fixed area waits off the rocks and checks again.
 - **Drop Gems**: drop gems while mining.
-- **Use Mine Upstairs** / **Use Upstairs Hopper**: upper level and the upstairs hopper.
-- **Fix Water Wheel**: after each hopper deposit, repair every broken water wheel strut.
+- **Use Mine Upstairs**: when Mining Area is Any, mine upstairs. A specific Mining Area is used as selected.
+- **Use Upstairs Hopper**: deposit in the upstairs hopper while you are upstairs.
+- **Fix Water Wheel**: after a hopper deposit, repair a wheel only when it is stopped. A spinning wheel is left alone.
 - **Mining Area**: which vein area to use. Default is any.

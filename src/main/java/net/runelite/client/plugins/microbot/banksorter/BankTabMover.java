@@ -14,6 +14,7 @@ import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 
 import java.awt.Rectangle;
 import java.util.ArrayList;
+import java.util.function.BooleanSupplier;
 import java.util.Comparator;
 import java.util.List;
 
@@ -202,10 +203,9 @@ final class BankTabMover {
         if (sourceRef.tab == destTab) {
             return true;
         }
-        if (!scrollToSlot(sourceRef.slot)) {
+        if (!revealSlot(sourceRef.slot, item.getId())) {
             return false;
         }
-        Global.sleep(200);
         Rectangle source = itemBounds(sourceRef.slot, item.getId(), true);
         Rectangle target = destTabBounds(destTab);
         if (!inCanvas(source) || !inCanvas(target)) {
@@ -217,7 +217,7 @@ final class BankTabMover {
         int qty = quantityFor(item.getId());
         Microbot.drag(source, target);
         int src = sourceRef.tab;
-        return Global.sleepUntil(() -> {
+        return waitUntil(() -> {
             if (quantityFor(item.getId()) != qty) {
                 return false;
             }
@@ -245,10 +245,9 @@ final class BankTabMover {
         int beforeCount = tabCount(newTabIndex);
         int beforeSource = sourceRef.tab > 0 ? tabCount(sourceRef.tab) : 0;
         int quantity = quantityFor(item.getId());
-        if (!scrollToSlot(sourceRef.slot)) {
+        if (!revealSlot(sourceRef.slot, item.getId())) {
             return false;
         }
-        Global.sleep(200);
         Rectangle source = itemBounds(sourceRef.slot, item.getId(), true);
         int dynamic = BANK_TAB_CONTAINER_DYNAMIC_MAIN_INDEX + beforeReal + 1;
         Rectangle target = dynamicTabBounds(dynamic);
@@ -258,7 +257,7 @@ final class BankTabMover {
             return false;
         }
         Microbot.drag(source, target);
-        boolean verified = Global.sleepUntil(() ->
+        boolean verified = waitUntil(() ->
                 tabCount(newTabIndex) > beforeCount
                         && (sourceRef.tab <= 0 || tabCount(sourceRef.tab) < beforeSource)
                         && quantityFor(item.getId()) == quantity
@@ -297,6 +296,38 @@ final class BankTabMover {
             Rectangle bounds = item.getBounds();
             return bounds == null ? null : new Rectangle(bounds);
         }).orElse(null);
+    }
+
+    /**
+     * Fast mode polls every 50ms and gives up after 800ms. Careful mode keeps the longer confirm window.
+     */
+    static boolean waitUntil(BooleanSupplier condition, int carefulTimeoutMs) {
+        boolean fast = OrganizeOptions.current().fast();
+        int timeout = fast ? 800 : carefulTimeoutMs;
+        int poll = fast ? 50 : 100;
+        long deadline = System.currentTimeMillis() + timeout;
+        while (true) {
+            if (condition.getAsBoolean()) {
+                return true;
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                return false;
+            }
+            Global.sleep(poll);
+        }
+    }
+
+    private static boolean revealSlot(int slot, int itemId) {
+        if (inCanvas(itemBounds(slot, itemId, true))) {
+            return true;
+        }
+        if (!scrollToSlot(slot)) {
+            return false;
+        }
+        if (!OrganizeOptions.current().fast()) {
+            Global.sleep(200);
+        }
+        return true;
     }
 
     private static boolean scrollToSlot(int slot) {
