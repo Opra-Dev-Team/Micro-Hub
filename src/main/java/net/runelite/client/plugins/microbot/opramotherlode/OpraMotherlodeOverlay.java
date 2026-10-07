@@ -49,7 +49,7 @@ public class OpraMotherlodeOverlay extends OverlayPanel {
             }
 
             panelComponent.getChildren().add(LineComponent.builder()
-                    .left("Sack: " + script.currentSackCount() + "/" + OpraMotherlodeScript.SACK_SIZE)
+                    .left("Sack: " + script.currentSackCount() + " + " + script.payDirtCount() + " / " + OpraMotherlodeScript.SACK_SIZE)
                     .build());
 
             panelComponent.getChildren().add(LineComponent.builder()

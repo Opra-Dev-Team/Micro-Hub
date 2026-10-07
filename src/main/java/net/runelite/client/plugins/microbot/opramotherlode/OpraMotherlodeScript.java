@@ -253,10 +253,13 @@ public class OpraMotherlodeScript extends Script
             return;
         }
 
-        if (payDirtCount() > 0 && Rs2Inventory.isFull()) {
+        if (payDirtCount() > 0 && (Rs2Inventory.isFull() || totalPaydirt() >= SACK_SIZE)) {
             if (shouldHoldDepositForWheel()) {
                 status = MLMStatus.MINING;
                 return;
+            }
+            if (status != MLMStatus.DEPOSIT_HOPPER && totalPaydirt() >= SACK_SIZE && !Rs2Inventory.isFull()) {
+                log.info("Depositing before sack plus inventory passes 108, {}", sackDebugState());
             }
             resetMiningState();
             status = MLMStatus.DEPOSIT_HOPPER;
@@ -280,14 +283,8 @@ public class OpraMotherlodeScript extends Script
 
 	private void handleMining()
 	{
-		if (currentSackCount() >= SACK_SIZE) {
-			log.info("handleMining blocked, sack at 108, {}", sackDebugState());
-			miningVeinTile = null;
-			idleAtVeinSince = 0;
-			status = MLMStatus.EMPTY_SACK;
-			return;
-		}
-		if (waitingForOthersToFixWheel && !config.fixWaterwheel() && Rs2Inventory.isFull() && payDirtCount() > 0) {
+		if (waitingForOthersToFixWheel && !config.fixWaterwheel() && payDirtCount() > 0
+				&& (Rs2Inventory.isFull() || totalPaydirt() >= SACK_SIZE)) {
 			if (wheelSeenSpinning()) {
 				waitingForOthersToFixWheel = false;
 			} else {
@@ -299,6 +296,20 @@ public class OpraMotherlodeScript extends Script
 				}
 				return;
 			}
+		}
+		if (currentSackCount() >= SACK_SIZE) {
+			log.info("handleMining blocked, sack at 108, {}", sackDebugState());
+			miningVeinTile = null;
+			idleAtVeinSince = 0;
+			status = MLMStatus.EMPTY_SACK;
+			return;
+		}
+		if (payDirtCount() > 0 && totalPaydirt() >= SACK_SIZE) {
+			log.info("handleMining blocked, sack plus inventory at 108, {}", sackDebugState());
+			miningVeinTile = null;
+			idleAtVeinSince = 0;
+			status = MLMStatus.DEPOSIT_HOPPER;
+			return;
 		}
 		if (Rs2Player.getAnimation() != AnimationID.IDLE || AntibanPlugin.isMining()) {
 			idleAtVeinSince = 0;
@@ -497,12 +508,16 @@ public class OpraMotherlodeScript extends Script
         }
     }
 
-    private int payDirtCount() {
+    int payDirtCount() {
         return Rs2Inventory.count(ItemID.PAYDIRT);
     }
 
     int currentSackCount() {
         return Microbot.getVarbitValue(VarbitID.MOTHERLODE_SACK_TRANSMIT);
+    }
+
+    int totalPaydirt() {
+        return currentSackCount() + payDirtCount();
     }
 
     private void fixWaterwheel() {
@@ -1546,6 +1561,7 @@ public class OpraMotherlodeScript extends Script
 	{
 		return "sack=" + currentSackCount() + "/" + SACK_SIZE
 			+ ", paydirt=" + payDirtCount()
+			+ ", total=" + totalPaydirt()
 			+ ", ore=" + hasOreInInventory()
 			+ ", workflow=" + emptySackWorkflowActive
 			+ ", upstairs=" + isUpperFloor();
