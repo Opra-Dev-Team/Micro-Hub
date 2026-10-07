@@ -3,7 +3,7 @@
 </p>
 
 # Micro Hub
-Plugins with a Windows setup window that installs or removes the set you choose. Built by [Opra Dev Team](https://github.com/Opra-Dev-Team).
+Plugins with a setup window that installs or removes the set you choose. Built by [Opra Dev Team](https://github.com/Opra-Dev-Team).
 
 Each plugin is its own jar. The client loads them from your local plugin folder the next time it starts. The jars in `dist/` are already built, so installing does not require a JDK.
 
@@ -21,6 +21,10 @@ OP is lime and RA is red. That `[Opra]` prefix is how these plugins show up in t
 
 ```powershell
 irm https://raw.githubusercontent.com/Opra-Dev-Team/Micro-Hub/dev/installer/run.ps1 | iex
+```
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Opra-Dev-Team/Micro-Hub/dev/installer/run.sh | bash
 ```
 
 ## Setup window
