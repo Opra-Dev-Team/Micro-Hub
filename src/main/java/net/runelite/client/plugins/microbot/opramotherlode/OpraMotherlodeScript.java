@@ -63,9 +63,12 @@ public class OpraMotherlodeScript extends Script
     private static final int ROCKFALL_PATH_TILES = 2;
     private static final int ROCKFALL_A = 26679;
     private static final int ROCKFALL_B = 26680;
+    private static final int SACK_VARBIT_WAIT_MS = 2_000;
+    private static final int HIGH_SACK_LOG = 80;
 
 	private static final WorldPoint HOPPER_DEPOSIT_DOWN = new WorldPoint(3748, 5672, 0);
 	private static final WorldPoint HOPPER_DEPOSIT_UP = new WorldPoint(3755, 5677, 0);
+	private static final WorldPoint LADDER_BOTTOM_TILE = new WorldPoint(3755, 5673, 0);
 	private static final WorldPoint SACK_TILE = new WorldPoint(3748, 5659, 0);
 	private static final WorldPoint DEPOSIT_BOX_TILE = DepositBoxLocation.MOTHERLODE_MINE.getWorldPoint();
 
@@ -218,6 +221,19 @@ public class OpraMotherlodeScript extends Script
             return;
         }
 
+        if (emptySackWorkflowActive) {
+            if (emptySackFinished()) {
+                completeEmptySackWorkflow();
+            } else {
+                if (status != MLMStatus.EMPTY_SACK) {
+                    log.info("Keeping EMPTY_SACK, workflow still on, {}", sackDebugState());
+                }
+                resetMiningState();
+                status = MLMStatus.EMPTY_SACK;
+                return;
+            }
+        }
+
         if (config.fixWaterwheel() && shouldRepairWaterwheel) {
             status = MLMStatus.FIXING_WATERWHEEL;
             return;
@@ -228,7 +244,10 @@ public class OpraMotherlodeScript extends Script
             return;
         }
 
-        if (sackNeedsEmpty()) {
+        if (currentSackCount() >= SACK_SIZE) {
+            if (status != MLMStatus.EMPTY_SACK) {
+                log.info("Starting EMPTY_SACK, sack at 108, {}", sackDebugState());
+            }
             resetMiningState();
             status = MLMStatus.EMPTY_SACK;
             return;
@@ -243,15 +262,15 @@ public class OpraMotherlodeScript extends Script
             status = MLMStatus.DEPOSIT_HOPPER;
             return;
         }
+        if (currentSackCount() >= HIGH_SACK_LOG && status != MLMStatus.MINING) {
+            log.info("MINING with high sack, {}", sackDebugState());
+        }
         status = MLMStatus.MINING;
     }
 
-    private boolean sackNeedsEmpty()
+    private boolean emptySackFinished()
     {
-        if (emptySackWorkflowActive) {
-            return currentSackCount() > 0 || hasOreInInventory();
-        }
-        return currentSackCount() >= SACK_SIZE;
+        return currentSackCount() <= 0 && !hasOreInInventory() && payDirtCount() == 0;
     }
 
     private boolean hasRequiredTools()
@@ -262,6 +281,7 @@ public class OpraMotherlodeScript extends Script
 	private void handleMining()
 	{
 		if (currentSackCount() >= SACK_SIZE) {
+			log.info("handleMining blocked, sack at 108, {}", sackDebugState());
 			miningVeinTile = null;
 			idleAtVeinSince = 0;
 			status = MLMStatus.EMPTY_SACK;
@@ -348,7 +368,7 @@ public class OpraMotherlodeScript extends Script
 		if (!emptySackWorkflowActive)
 		{
 			emptySackWorkflowActive = true;
-			log.info("Emptying sack workflow started, sack={}/{}", currentSackCount(), SACK_SIZE);
+			log.info("Emptying sack workflow started, {}", sackDebugState());
 		}
 
 		if (!isWorkflowRunnable())
@@ -357,7 +377,11 @@ public class OpraMotherlodeScript extends Script
 			return;
 		}
 
-		ensureLowerFloor();
+		if (!ensureLowerFloor())
+		{
+			log.info("Search sack skipped, still upstairs, {}", sackDebugState());
+			return;
+		}
 		if (!isWorkflowRunnable())
 		{
 			abortCurrentWorkflow();
@@ -419,14 +443,14 @@ public class OpraMotherlodeScript extends Script
 
 	private void completeEmptySackWorkflow()
 	{
-		if (!waterwheelNeedsRepair())
+		if (wheelsActuallySpinning())
 		{
 			shouldRepairWaterwheel = false;
 		}
 		emptySackWorkflowActive = false;
 		Rs2Antiban.takeMicroBreakByChance();
 		status = MLMStatus.IDLE;
-        log.info("Emptying sack workflow complete");
+        log.info("Emptying sack workflow complete, {}", sackDebugState());
 	}
 
 	private boolean isWorkflowRunnable()
@@ -482,10 +506,24 @@ public class OpraMotherlodeScript extends Script
     }
 
     private void fixWaterwheel() {
+        if (isUpperFloor() && shouldRepairWaterwheel) {
+            if (!ensureLowerFloor()) {
+                log.info("Ladder down failed, still upstairs, keeping repair flag, {}", wheelDebugState());
+                return;
+            }
+        }
+
         if (!waterwheelNeedsRepair()) {
+            if (!wheelsLoaded()) {
+                log.info("Wheels not loaded, keeping repair flag, {}", wheelDebugState());
+                if (isUpperFloor()) {
+                    ensureLowerFloor();
+                }
+                return;
+            }
             shouldRepairWaterwheel = false;
             wheelRepairMisses = 0;
-            log.info("Water wheels are spinning");
+            log.info("Water wheels are spinning, {}", wheelDebugState());
             return;
         }
 
@@ -495,21 +533,21 @@ public class OpraMotherlodeScript extends Script
             if (wheelRepairMisses >= 2) {
                 shouldRepairWaterwheel = false;
                 wheelRepairMisses = 0;
-                log.debug("Stopped water wheel has no broken strut to hammer");
+                log.info("Stopped water wheel has no broken strut to hammer, {}", wheelDebugState());
             }
             return;
         }
 
         wheelRepairMisses = 0;
         if (isUpperFloor()) {
-            ensureLowerFloor();
-            if (isUpperFloor()) {
+            if (!ensureLowerFloor()) {
+                log.info("Ladder down failed before strut, still upstairs, {}", wheelDebugState());
                 return;
             }
         }
 
         status = MLMStatus.FIXING_WATERWHEEL;
-        log.info("Fixing stopped water wheel, brokenStruts={}", broken.size());
+        log.info("Fixing stopped water wheel, {}", wheelDebugState());
 
 		if (!hasHammer()) {
 			if (!obtainHammer()) return;
@@ -574,32 +612,45 @@ public class OpraMotherlodeScript extends Script
 
         if(isUpperFloor() && !config.upstairsHopperUnlocked())
         {
-            ensureLowerFloor();
+            if (!ensureLowerFloor()) {
+                log.info("Hopper wait, still upstairs, {}", sackDebugState());
+                return;
+            }
         }
 
         final int paydirtToDeposit = payDirtCount();
+        final int sackBefore = currentSackCount();
 
         if (hopper != null && hopper.click()) {
-            log.debug("Depositing pay-dirt into hopper");
+            log.info("Depositing pay-dirt into hopper, paydirt={}, sackBefore={}/{}", paydirtToDeposit, sackBefore, SACK_SIZE);
             sleepUntil(() -> payDirtCount() != paydirtToDeposit && !Rs2Player.isAnimating(), 10_000);
+            sleepUntil(() -> currentSackCount() != sackBefore || currentSackCount() >= SACK_SIZE, SACK_VARBIT_WAIT_MS);
 
             if (config.fixWaterwheel() && payDirtCount() != paydirtToDeposit) {
                 if (waterwheelNeedsRepair()) {
-                    log.info("Water wheel is stopped after deposit");
+                    log.info("Water wheel is stopped after deposit, {}", wheelDebugState());
                     shouldRepairWaterwheel = true;
                     fixWaterwheel();
+                } else if (!wheelsLoaded()) {
+                    log.info("Wheels not loaded after deposit, leaving repair flag, {}", wheelDebugState());
                 } else {
                     shouldRepairWaterwheel = false;
-                    log.debug("Water wheels still spinning after deposit");
+                    log.info("Water wheels still spinning after deposit, {}", wheelDebugState());
                 }
             }
 
-            log.debug("Hopper deposit complete: paydirtDeposited={}, sack={}/{}",
-                    paydirtToDeposit, currentSackCount(), SACK_SIZE);
+            int sackAfter = currentSackCount();
+            boolean forceEmpty = sackAfter >= SACK_SIZE;
+            log.info("Hopper deposit complete: paydirtBefore={}, sack {} -> {}/{}, upstairs={}, forceEmpty={}",
+                    paydirtToDeposit, sackBefore, sackAfter, SACK_SIZE, isUpperFloor(), forceEmpty);
+            if (forceEmpty) {
+                resetMiningState();
+                status = MLMStatus.EMPTY_SACK;
+            }
         }
         else
         {
-            log.debug("Hopper unavailable, walking closer to deposit point");
+            log.info("Hopper unavailable, walking closer to deposit point");
             walkToward(hopperDeposit, 15);
         }
     }
@@ -1196,43 +1247,68 @@ public class OpraMotherlodeScript extends Script
         walkToward(target, 2);
     }
 
-    private void goUp()
+    private boolean goUp()
     {
-        if (isUpperFloor()) return;
-        log.debug("Transitioning to upper floor");
+        if (isUpperFloor()) return true;
 
 		Rs2TileObjectModel ladder = rs2TileObjectCache.query().withId(ObjectID.MOTHERLODE_LADDER_BOTTOM).nearestReachable();
 		if (ladder == null) {
-			walkToward(miningSpot.getWorldPoint().get(0), 6);
-			return;
+            WorldPoint walkTo = ladderWalkTargetUp();
+            log.info("Bottom ladder not found, walking toward {}, spot={}, upstairs={}", walkTo, miningSpot, isUpperFloor());
+			walkToward(walkTo, 6);
+			return false;
 		}
 
-		if (!ladder.click()) return;
+		if (!ladder.click()) {
+            log.info("Bottom ladder click missed, upstairs={}", isUpperFloor());
+            return false;
+        }
 
 		sleepUntil(() -> Rs2Player.isMoving() || Rs2Player.isAnimating(), 1_500);
 		sleepUntil(this::isUpperFloor, 8_000);
+        boolean up = isUpperFloor();
+        log.info("Ladder up after click, upstairs={}", up);
+        return up;
     }
 
-    private void goDown()
+    private boolean goDown()
     {
-        if (!isUpperFloor()) return;
-        log.debug("Transitioning to lower floor");
+        if (!isUpperFloor()) return true;
 
 		Rs2TileObjectModel ladder = rs2TileObjectCache.query().withId(ObjectID.MOTHERLODE_LADDER_TOP).nearestReachable();
 		if (ladder == null) {
+            log.info("Top ladder not found, walking toward hopper, upstairs={}", isUpperFloor());
 			walkToward(HOPPER_DEPOSIT_DOWN, 6);
-			return;
+			return false;
 		}
 
-		if (!ladder.click()) return;
+		if (!ladder.click()) {
+            log.info("Top ladder click missed, upstairs={}", isUpperFloor());
+            return false;
+        }
 
 		sleepUntil(() -> Rs2Player.isMoving() || Rs2Player.isAnimating(), 1_500);
         sleepUntil(() -> !isUpperFloor(), 8_000);
+        boolean down = !isUpperFloor();
+        log.info("Ladder down after click, downstairs={}", down);
+        return down;
     }
 
-    private void ensureLowerFloor()
+    private boolean ensureLowerFloor()
     {
-        if (isUpperFloor()) goDown();
+        if (!isUpperFloor()) {
+            return true;
+        }
+        return goDown();
+    }
+
+    private WorldPoint ladderWalkTargetUp()
+    {
+        if (miningSpot != null && miningSpot.getWorldPoint() != null && !miningSpot.getWorldPoint().isEmpty()) {
+            return miningSpot.getWorldPoint().get(0);
+        }
+        log.info("goUp has no mining spot, walking to ladder tile, spot={}, upstairs={}", miningSpot, isUpperFloor());
+        return LADDER_BOTTOM_TILE;
     }
 
     private boolean isUpperFloor()
@@ -1335,7 +1411,7 @@ public class OpraMotherlodeScript extends Script
             return;
         }
 
-        log.info("MLM status transition: {} -> {}", lastLoggedStatus, status);
+        log.info("MLM status transition: {} -> {}, {}", lastLoggedStatus, status, sackDebugState());
         lastLoggedStatus = status;
     }
 
@@ -1413,10 +1489,8 @@ public class OpraMotherlodeScript extends Script
 		if (!brokenStruts().isEmpty()) {
 			return true;
 		}
-		List<Rs2TileObjectModel> wheels = rs2TileObjectCache.query()
-			.where(o -> o.getId() == SPINNING_WATER_WHEEL || o.getId() == STOPPED_WATER_WHEEL)
-			.toListOnClientThread();
-		if (wheels == null || wheels.isEmpty()) {
+		List<Rs2TileObjectModel> wheels = loadedWheels();
+		if (wheels.isEmpty()) {
 			return false;
 		}
 		for (Rs2TileObjectModel wheel : wheels) {
@@ -1425,6 +1499,65 @@ public class OpraMotherlodeScript extends Script
 			}
 		}
 		return false;
+	}
+
+	private List<Rs2TileObjectModel> loadedWheels()
+	{
+		List<Rs2TileObjectModel> wheels = rs2TileObjectCache.query()
+			.where(o -> o.getId() == SPINNING_WATER_WHEEL || o.getId() == STOPPED_WATER_WHEEL)
+			.toListOnClientThread();
+		return wheels == null ? new ArrayList<>() : wheels;
+	}
+
+	private boolean wheelsLoaded()
+	{
+		return !loadedWheels().isEmpty();
+	}
+
+	private boolean wheelsActuallySpinning()
+	{
+		if (!brokenStruts().isEmpty()) {
+			return false;
+		}
+		List<Rs2TileObjectModel> wheels = loadedWheels();
+		if (wheels.isEmpty()) {
+			return false;
+		}
+		for (Rs2TileObjectModel wheel : wheels) {
+			if (wheel != null && wheel.getId() == STOPPED_WATER_WHEEL) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private int countWheels(int id)
+	{
+		int count = 0;
+		for (Rs2TileObjectModel wheel : loadedWheels()) {
+			if (wheel != null && wheel.getId() == id) {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	private String sackDebugState()
+	{
+		return "sack=" + currentSackCount() + "/" + SACK_SIZE
+			+ ", paydirt=" + payDirtCount()
+			+ ", ore=" + hasOreInInventory()
+			+ ", workflow=" + emptySackWorkflowActive
+			+ ", upstairs=" + isUpperFloor();
+	}
+
+	private String wheelDebugState()
+	{
+		return "spinning=" + countWheels(SPINNING_WATER_WHEEL)
+			+ ", stopped=" + countWheels(STOPPED_WATER_WHEEL)
+			+ ", brokenStruts=" + getBrokenStrutCount()
+			+ ", upstairs=" + isUpperFloor()
+			+ ", repairFlag=" + shouldRepairWaterwheel;
 	}
 
 	private void depositAllExceptKept() {

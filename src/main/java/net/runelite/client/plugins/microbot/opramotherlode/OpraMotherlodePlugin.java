@@ -27,7 +27,7 @@ import net.runelite.client.ui.overlay.OverlayManager;
 )
 public class OpraMotherlodePlugin extends Plugin {
 
-	public static final String version = "1.2.2";
+	public static final String version = "1.2.3";
 
     @Inject
     private OpraMotherlodeConfig config;
