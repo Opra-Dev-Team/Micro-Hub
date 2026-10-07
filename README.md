@@ -32,7 +32,15 @@ curl -fsSL https://raw.githubusercontent.com/Opra-Dev-Team/Micro-Hub/dev/install
 The window lists each plugin and whether it is already installed. Check the ones you want, then use **Install selected**. Close the game client first so the jars can be replaced. When it finishes, restart the client and enable the plugins you want.
 
 <p align="center">
-  <img src="installer/screenshot.png" alt="Micro Hub setup window showing the plugin list and Install selected button" width="720">
+  <img src="installer/screenshot.png" alt="Micro Hub setup window on Windows" width="720">
+  <br>
+  Windows
+</p>
+
+<p align="center">
+  <img src="installer/screenshot-linux.png" alt="Micro Hub setup window on Linux" width="720">
+  <br>
+  Linux
 </p>
 
 ---
