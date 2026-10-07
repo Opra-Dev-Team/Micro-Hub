@@ -39,6 +39,10 @@ https://github.com/user-attachments/assets/99107c52-b892-42f8-843a-22dd0e524a36
 
 [Linux screenshot](installer/screenshot-linux.png)
 
+## Motherlode Mine Plugin (Demo)
+
+https://github.com/user-attachments/assets/951d9a29-78f1-4084-9ef8-dffe4e7ebccd
+
 ---
 
 **Disclaimer:** AI was used in the making of this project.
