@@ -2,7 +2,7 @@
 
 Pickpockets wealthy citizens and thieves houses in Varlamore. This plugin is standalone. It does not use the Microbot Hub House Thieving plugin.
 
-Imported from Microbot Hub House Thieving and renamed so both can be installed at the same time. This copy stays on 1.0.0 until release.
+Imported from Microbot Hub House Thieving and renamed so both can be installed at the same time.
 
 ## Setup
 

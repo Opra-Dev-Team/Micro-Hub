@@ -72,6 +72,12 @@ $script:LegacyJars = @{
     'OpraMotherlodePlugin.jar' = 'MotherloadMinePlugin.jar'
 }
 
+$script:PluginLabels = @{
+    'OpraHouseThievingPlugin.jar' = 'House Thieving'
+    'OpraMotherlodePlugin.jar' = 'Motherlode Mine'
+    'OpraBlastFurnacePlugin.jar' = 'Blast Furnace'
+}
+
 $script:PluginBlurbs = @{
     'BankSorterPlugin.jar' = 'Sorts the bank into an iron 8-tab layout.'
     'SandBuyerPlugin.jar' = 'Buys sand and soda ash in Catherby, then hops.'
@@ -80,6 +86,7 @@ $script:PluginBlurbs = @{
     'FlaxPickerPlugin.jar' = 'Picks flax at Nemus Retreat and can spin it.'
     'OpraMotherlodePlugin.jar' = 'Mines paydirt in the Motherlode Mine.'
     'OpraHouseThievingPlugin.jar' = 'Pickpockets wealthy citizens and thieves houses in Varlamore.'
+    'OpraBlastFurnacePlugin.jar' = 'Smelts bars at the Blast Furnace.'
 }
 
 function Get-LibraryJarNames {
@@ -99,8 +106,12 @@ function Get-LibraryJarNames {
 }
 
 function Get-PluginLabel([string] $jarName) {
+    if ($script:PluginLabels.ContainsKey($jarName)) {
+        return $script:PluginLabels[$jarName]
+    }
     $name = [System.IO.Path]::GetFileNameWithoutExtension($jarName)
     if ($name.StartsWith('Opies')) { $name = $name.Substring(5) }
+    if ($name.StartsWith('Opra')) { $name = $name.Substring(4) }
     if ($name.EndsWith('Plugin')) { $name = $name.Substring(0, $name.Length - 6) }
     $spaced = [regex]::Replace($name, '(?<!^)([A-Z])', ' $1')
     return $spaced.Trim()

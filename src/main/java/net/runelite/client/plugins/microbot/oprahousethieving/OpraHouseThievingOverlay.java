@@ -27,7 +27,7 @@ public class OpraHouseThievingOverlay extends OverlayPanel {
         try {
             panelComponent.setPreferredSize(new Dimension(200, 300));
             panelComponent.getChildren().add(TitleComponent.builder()
-                    .text("Opra House Thieving " + OpraHouseThievingPlugin.version)
+                    .text("House Thieving " + OpraHouseThievingPlugin.version)
                     .color(Color.GREEN)
                     .build());
 

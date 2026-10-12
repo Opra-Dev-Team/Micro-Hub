@@ -51,6 +51,12 @@ LEGACY = {
     "OpraMotherlodePlugin.jar": "MotherloadMinePlugin.jar",
 }
 
+LABELS = {
+    "OpraHouseThievingPlugin.jar": "House Thieving",
+    "OpraMotherlodePlugin.jar": "Motherlode Mine",
+    "OpraBlastFurnacePlugin.jar": "Blast Furnace",
+}
+
 BLURBS = {
     "BankSorterPlugin.jar": "Sorts the bank into an iron 8-tab layout.",
     "SandBuyerPlugin.jar": "Buys sand and soda ash in Catherby, then hops.",
@@ -59,6 +65,7 @@ BLURBS = {
     "FlaxPickerPlugin.jar": "Picks flax at Nemus Retreat and can spin it.",
     "OpraMotherlodePlugin.jar": "Mines paydirt in the Motherlode Mine.",
     "OpraHouseThievingPlugin.jar": "Pickpockets wealthy citizens and thieves houses in Varlamore.",
+    "OpraBlastFurnacePlugin.jar": "Smelts bars at the Blast Furnace.",
 }
 
 VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
@@ -67,9 +74,13 @@ WINDOW_H = 620
 
 
 def plugin_label(jar_name: str) -> str:
+    if jar_name in LABELS:
+        return LABELS[jar_name]
     name = Path(jar_name).stem
     if name.startswith("Opies"):
         name = name[5:]
+    if name.startswith("Opra"):
+        name = name[4:]
     if name.endswith("Plugin"):
         name = name[:-6]
     spaced = re.sub(r"(?<!^)([A-Z])", r" \1", name)
