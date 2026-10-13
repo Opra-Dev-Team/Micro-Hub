@@ -6,3 +6,4 @@ OpraBlastFurnacePlugin.jar
 OpraHouseThievingPlugin.jar
 OpraMotherlodePlugin.jar
 SandBuyerPlugin.jar
+SweetcornChefPlugin.jar

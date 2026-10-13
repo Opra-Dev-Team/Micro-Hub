@@ -14,6 +14,7 @@ Each plugin is its own jar. The client loads them from your local plugin folder 
 | [Opra] Molten Glass | 1.0.2 | 1.9.6 | `dist/MoltenGlassPlugin.jar` |
 | [Opra] Eclipse Red | 1.0.9 | 1.9.6 | `dist/EclipseRedPlugin.jar` |
 | [Opra] Flax Picker | 1.0.2 | 1.9.6 | `dist/FlaxPickerPlugin.jar` |
+| [Opra] Sweetcorn Chef | 1.0.0 | 1.9.6 | `dist/SweetcornChefPlugin.jar` |
 | [Opra] Motherlode Mine | 1.2.4 | 1.9.8 | `dist/OpraMotherlodePlugin.jar` |
 | [Opra] House Thieving | 1.0.1 | 2.0.7 | `dist/OpraHouseThievingPlugin.jar` |
 | [Opra] Blast Furnace | 1.0.13 | 2.1.0 | `dist/OpraBlastFurnacePlugin.jar` |

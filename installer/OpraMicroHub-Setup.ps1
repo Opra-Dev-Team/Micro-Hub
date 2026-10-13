@@ -87,6 +87,7 @@ $script:PluginBlurbs = @{
     'OpraMotherlodePlugin.jar' = 'Mines paydirt in the Motherlode Mine.'
     'OpraHouseThievingPlugin.jar' = 'Pickpockets wealthy citizens and thieves houses in Varlamore.'
     'OpraBlastFurnacePlugin.jar' = 'Smelts bars at the Blast Furnace.'
+    'SweetcornChefPlugin.jar' = 'Picks, cooks, and drops sweetcorn at Kastori.'
 }
 
 function Get-LibraryJarNames {

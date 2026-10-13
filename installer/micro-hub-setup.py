@@ -66,6 +66,7 @@ BLURBS = {
     "OpraMotherlodePlugin.jar": "Mines paydirt in the Motherlode Mine.",
     "OpraHouseThievingPlugin.jar": "Pickpockets wealthy citizens and thieves houses in Varlamore.",
     "OpraBlastFurnacePlugin.jar": "Smelts bars at the Blast Furnace.",
+    "SweetcornChefPlugin.jar": "Picks, cooks, and drops sweetcorn at Kastori.",
 }
 
 VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
