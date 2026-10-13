@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/Opra-Dev-Team/Micro-Hub/dev/install
 
 ## Setup window
 
-The window lists each plugin and whether it is already installed. Check the ones you want, then use **Install selected**. Close the game client first so the jars can be replaced. When it finishes, restart the client and enable the plugins you want.
+The window lists each plugin and whether it is already installed. Toggle a plugin on to install it, or off to remove it. Close the game client first so jars can be replaced; queued changes and updates apply when it closes. Restart the client and enable the plugins you want.
 
 
 https://github.com/user-attachments/assets/99107c52-b892-42f8-843a-22dd0e524a36

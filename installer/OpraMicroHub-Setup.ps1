@@ -1,5 +1,5 @@
 # Micro Hub setup window.
-# Install copies the checked plugins. Uninstall removes only the checked plugins.
+# Toggles install or remove plugins. Outdated installed jars update automatically.
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -59,6 +59,7 @@ $script:ShortcutFileName = 'Micro Hub.lnk'
 $script:LauncherDir = Join-Path $env:LOCALAPPDATA 'OpraMicroHub'
 $script:UpdateNoticeShown = $false
 $script:PendingUpdateApplied = $false
+$script:PendingToggles = @{}
 $script:RunScriptUri = 'https://raw.githubusercontent.com/Opra-Dev-Team/Micro-Hub/dev/installer/run.ps1'
 $script:TeamName = 'Opra Dev Team'
 $script:TeamGitHubUri = 'https://github.com/Opra-Dev-Team'
@@ -490,16 +491,145 @@ function Uninstall-Library([string[]] $jarNames, [scriptblock] $onStep) {
     return @(Remove-LibraryJars $jarNames $onStep)
 }
 
-function Get-CheckedJarNames($form) {
-    $names = New-Object System.Collections.Generic.List[string]
+function Test-PluginInstalled([string] $jarName) {
+    return ((Get-InstalledCopy $jarName).Count -gt 0) -or (Test-LegacyJarInstalled $jarName)
+}
+
+function Get-DesiredPluginOn([string] $jarName) {
+    if ($script:PendingToggles.ContainsKey($jarName)) {
+        return [bool] $script:PendingToggles[$jarName]
+    }
+    return Test-PluginInstalled $jarName
+}
+
+function Sync-CardCheckedStates($form) {
     $cards = $form.Tag['Cards']
-    if ($null -eq $cards) { return @() }
+    if ($null -eq $cards) { return }
     foreach ($card in $cards) {
-        if ($card.Tag.Checked -and $card.Tag.Available) {
-            [void] $names.Add($card.Tag.JarName)
+        if (-not $card.Tag.Available) {
+            $card.Tag.Checked = $false
+            continue
+        }
+        $card.Tag.Checked = Get-DesiredPluginOn $card.Tag.JarName
+    }
+}
+
+function Invoke-TogglePlugin($form, $log, [string] $jarName, [bool] $desiredOn) {
+    if ($null -eq $form -or $form.Tag.Busy) { return }
+    $script:PendingToggles[$jarName] = $desiredOn
+    Sync-CardCheckedStates $form
+    Update-PluginCardStatus $form
+    if (Test-ClientRunning) {
+        $form.Tag.Warning.Visible = $true
+        Update-LibraryLayout $form
+        $label = Get-PluginLabel $jarName
+        $message = if ($desiredOn) {
+            "$label will install when the client closes."
+        } else {
+            "$label will uninstall when the client closes."
+        }
+        Set-HubStatus $form $message 'wait'
+        Write-Log $log $message
+        return
+    }
+    Invoke-PendingToggles $form $log
+}
+
+function Set-BulkPluginDesired($form, $log, [bool] $desiredOn) {
+    if ($null -eq $form -or $form.Tag.Busy) { return }
+    $cards = $form.Tag['Cards']
+    if ($null -eq $cards) { return }
+    $queued = 0
+    foreach ($card in $cards) {
+        if (-not $card.Tag.Available) { continue }
+        $jarName = $card.Tag.JarName
+        if ((Get-DesiredPluginOn $jarName) -eq $desiredOn) { continue }
+        $script:PendingToggles[$jarName] = $desiredOn
+        $queued++
+    }
+    if ($queued -eq 0) { return }
+    Sync-CardCheckedStates $form
+    Update-PluginCardStatus $form
+    if (Test-ClientRunning) {
+        $form.Tag.Warning.Visible = $true
+        Update-LibraryLayout $form
+        $message = if ($desiredOn) {
+            'Selected plugins will install when the client closes.'
+        } else {
+            'Selected plugins will uninstall when the client closes.'
+        }
+        Set-HubStatus $form $message 'wait'
+        Write-Log $log $message
+        return
+    }
+    Invoke-PendingToggles $form $log
+}
+
+function Invoke-PendingToggles($form, $log) {
+    if ($null -eq $form -or $form.Tag.Busy) { return }
+    if ($script:PendingToggles.Count -eq 0) { return }
+    if (Test-ClientRunning) { return }
+
+    $toInstall = New-Object System.Collections.Generic.List[string]
+    $toRemove = New-Object System.Collections.Generic.List[string]
+    foreach ($jarName in @($script:PendingToggles.Keys)) {
+        $want = [bool] $script:PendingToggles[$jarName]
+        $have = Test-PluginInstalled $jarName
+        if ($want -and -not $have) {
+            [void] $toInstall.Add($jarName)
+        } elseif (-not $want -and $have) {
+            [void] $toRemove.Add($jarName)
+        } else {
+            $script:PendingToggles.Remove($jarName)
         }
     }
-    return $names.ToArray()
+    if ($toInstall.Count -eq 0 -and $toRemove.Count -eq 0) {
+        Sync-CardCheckedStates $form
+        Update-PluginCardStatus $form
+        return
+    }
+
+    $form.Tag.Busy = $true
+    $script:ToggleTotal = [Math]::Max(1, ($toInstall.Count + $toRemove.Count))
+    $script:ToggleDone = 0
+    try {
+        Show-HubProgress $form $script:ToggleTotal
+        if ($toRemove.Count -gt 0) {
+            $removed = @(Uninstall-Library $toRemove.ToArray() {
+                param($done, $count, $jarName)
+                $script:ToggleDone = $done
+                Set-HubStatus $form ("Removing $(Get-PluginLabel $jarName)") 'busy'
+                Advance-HubProgress $form ($script:ToggleDone / $script:ToggleTotal)
+            })
+            foreach ($path in $removed) { Write-Log $log "Uninstalled: $path" }
+            $script:ToggleDone = $toRemove.Count
+        }
+        if ($toInstall.Count -gt 0) {
+            $removeBase = $toRemove.Count
+            $result = Install-Library $toInstall.ToArray() {
+                param($done, $count, $jarName)
+                Set-HubStatus $form ("Installing $(Get-PluginLabel $jarName)") 'busy'
+                Advance-HubProgress $form (($removeBase + $done) / $script:ToggleTotal)
+            }
+            foreach ($path in $result.Removed) { Write-Log $log "Removed old copy: $path" }
+            foreach ($path in $result.Installed) { Write-Log $log "Installed: $path" }
+        }
+        foreach ($jarName in @($toInstall.ToArray() + $toRemove.ToArray())) {
+            $script:PendingToggles.Remove($jarName)
+        }
+        Write-Log $log 'Restart the client, then enable the plugins you want.'
+        Complete-HubProgress $form
+        Set-HubStatus $form 'Plugin changes applied. Restart the client before using them.' 'ok'
+    } catch {
+        Hide-HubProgress $form
+        Write-Log $log $_.Exception.Message
+        Set-HubStatus $form $_.Exception.Message 'error'
+        $script:PendingToggles.Clear()
+    } finally {
+        $form.Tag.Busy = $false
+        Sync-CardCheckedStates $form
+        Update-PluginCardStatus $form
+    }
 }
 
 function Write-Log($box, [string] $message) {
@@ -619,13 +749,60 @@ function Add-CardToggle($control, $card) {
     $control.Cursor = [System.Windows.Forms.Cursors]::Hand
     $control.Add_Click({
         if (-not $card.Tag.Available) { return }
-        $card.Tag.Checked = -not $card.Tag.Checked
-        $card.Invalidate()
         $owner = $card.FindForm()
-        if ($null -ne $owner) {
-            Update-PluginCardStatus $owner
-        }
+        if ($null -eq $owner -or $owner.Tag.Busy) { return }
+        $desired = -not (Get-DesiredPluginOn $card.Tag.JarName)
+        Invoke-TogglePlugin $owner $owner.Tag.Log $card.Tag.JarName $desired
     }.GetNewClosure())
+}
+
+function Get-PluginCardGridMetrics($list) {
+    $gap = 8
+    $pad = 8
+    $scrollBar = [System.Windows.Forms.SystemInformation]::VerticalScrollBarWidth
+    $inner = [Math]::Max(200, $list.ClientSize.Width - $pad - $scrollBar)
+    $cols = 1
+    if ($inner -ge ((340 * 2) + $gap)) { $cols = 2 }
+    $cardWidth = [int] (($inner - (($cols - 1) * $gap)) / $cols)
+    if ($cardWidth -lt 200) { $cardWidth = 200 }
+    return @{
+        Gap = $gap
+        Pad = $pad
+        Cols = $cols
+        CardWidth = $cardWidth
+        CardHeight = 46
+        RowStride = 52
+    }
+}
+
+function Update-PluginCardLayout($form) {
+    if ($null -eq $form -or $null -eq $form.Tag -or $null -eq $form.Tag.List) { return }
+    $list = $form.Tag.List
+    $cards = $form.Tag.Cards
+    if ($null -eq $cards -or $cards.Count -eq 0) { return }
+    $metrics = Get-PluginCardGridMetrics $list
+    $cols = [int] $metrics.Cols
+    $cardWidth = [int] $metrics.CardWidth
+    $gap = [int] $metrics.Gap
+    $pad = [int] $metrics.Pad
+    $cardHeight = [int] $metrics.CardHeight
+    $rowStride = [int] $metrics.RowStride
+    $index = 0
+    foreach ($card in $cards) {
+        $col = $index % $cols
+        $row = [int] [Math]::Floor($index / $cols)
+        $x = $pad + ($col * ($cardWidth + $gap))
+        $y = 4 + ($row * $rowStride)
+        $card.Location = New-Object System.Drawing.Point($x, $y)
+        $card.Size = New-Object System.Drawing.Size($cardWidth, $cardHeight)
+        $detail = $card.Controls['detail']
+        if ($null -ne $detail) {
+            $detailWidth = [Math]::Max(60, $cardWidth - 220)
+            $detail.Size = New-Object System.Drawing.Size($detailWidth, 16)
+        }
+        $card.Invalidate()
+        $index++
+    }
 }
 
 function Build-PluginCards($form) {
@@ -634,27 +811,26 @@ function Build-PluginCards($form) {
     $list.Controls.Clear()
     $cards.Clear()
     $names = @(Get-LibraryJarNames)
-    $y = 4
-    $scrollBar = [System.Windows.Forms.SystemInformation]::VerticalScrollBarWidth
-    $cardWidth = $list.ClientSize.Width - 16 - $scrollBar
-    if ($cardWidth -lt 480) { $cardWidth = 640 }
+    $metrics = Get-PluginCardGridMetrics $list
+    $cardWidth = [int] $metrics.CardWidth
     foreach ($jarName in $names) {
         $source = Join-Path $DistDir $jarName
         $available = Test-Path -LiteralPath $source
+        $installed = $available -and (Test-PluginInstalled $jarName)
         $card = New-Object System.Windows.Forms.Panel
-        $card.Location = New-Object System.Drawing.Point(8, $y)
+        $card.Location = New-Object System.Drawing.Point(8, 4)
         $card.Size = New-Object System.Drawing.Size($cardWidth, 46)
         $card.BackColor = $script:ColorBg
         $card.Cursor = [System.Windows.Forms.Cursors]::Hand
         $card.Tag = @{
             JarName = $jarName
-            Checked = [bool] $available
-            Knob = $(if ($available) { 1.0 } else { 0.0 })
+            Checked = [bool] $installed
+            Knob = $(if ($installed) { 1.0 } else { 0.0 })
             Available = [bool] $available
             AvailableVersion = (Get-AvailablePluginVersion $jarName)
             HasUpdate = $false
-            PillText = $(if ($available) { 'Not installed' } else { 'Missing' })
-            PillKind = $(if ($available) { 'off' } else { 'missing' })
+            PillText = $(if (-not $available) { 'Missing' } elseif ($installed) { 'Installed' } else { 'Not installed' })
+            PillKind = $(if (-not $available) { 'missing' } elseif ($installed) { 'installed' } else { 'off' })
         }
         Set-ControlBuffered $card
         $card.Add_Paint({
@@ -737,12 +913,10 @@ function Build-PluginCards($form) {
         $card.Add_Click({
             param($sender, $e)
             if (-not $sender.Tag.Available) { return }
-            $sender.Tag.Checked = -not $sender.Tag.Checked
-            $sender.Invalidate()
             $owner = $sender.FindForm()
-            if ($null -ne $owner) {
-                Update-PluginCardStatus $owner
-            }
+            if ($null -eq $owner -or $owner.Tag.Busy) { return }
+            $desired = -not (Get-DesiredPluginOn $sender.Tag.JarName)
+            Invoke-TogglePlugin $owner $owner.Tag.Log $sender.Tag.JarName $desired
         })
 
         $name = New-Object System.Windows.Forms.Label
@@ -771,7 +945,6 @@ function Build-PluginCards($form) {
         $card.Controls.AddRange(@($name, $detail))
         $list.Controls.Add($card)
         [void] $cards.Add($card)
-        $y += 52
     }
     if ($names.Count -eq 0) {
         $empty = New-Object System.Windows.Forms.Label
@@ -782,6 +955,8 @@ function Build-PluginCards($form) {
         $empty.Size = New-Object System.Drawing.Size(640, 48)
         $empty.Location = New-Object System.Drawing.Point(12, 12)
         $list.Controls.Add($empty)
+    } else {
+        Update-PluginCardLayout $form
     }
 }
 
@@ -820,54 +995,13 @@ function Update-PluginCardStatus($form) {
             $card.Tag.PillKind = 'off'
         }
         $card.Tag.HasUpdate = $needsUpdate
+        $card.Tag.Checked = Get-DesiredPluginOn $jarName
         $card.Invalidate()
-    }
-    $checked = @(Get-CheckedJarNames $form)
-    $form.Tag.InstallButton.Enabled = $checked.Count -gt 0
-    if ($null -ne $form.Tag.UninstallButton) {
-        $form.Tag.UninstallButton.Enabled = $checked.Count -gt 0
-        if ($checked.Count -gt 0) {
-            $form.Tag.UninstallButton.ForeColor = $script:ColorMuted
-        }
     }
     $running = Test-ClientRunning
     if ($null -ne $form.Tag.Warning -and ($form.Tag.Warning.Visible -ne $running)) {
         $form.Tag.Warning.Visible = $running
         Update-LibraryLayout $form
-    }
-}
-
-function Invoke-InstallPlugins($form, $log, [string[]] $names) {
-    if ($names.Count -eq 0) { return $false }
-    if (Test-ClientRunning) {
-        $form.Tag.Warning.Visible = $true
-        Update-LibraryLayout $form
-        Set-HubStatus $form 'Close the game client first. Install will wait until it closes.' 'wait'
-        Write-Log $log 'Install is waiting for the game client to close.'
-        return $false
-    }
-    $form.Tag.Busy = $true
-    try {
-        Show-HubProgress $form $names.Count
-        $result = Install-Library $names {
-            param($step, $total, $jarName)
-            Set-HubStatus $form ("Installing $(Get-PluginLabel $jarName)") 'busy'
-            Advance-HubProgress $form ($step / [Math]::Max(1, $total))
-        }
-        foreach ($path in $result.Removed) { Write-Log $log "Removed old copy: $path" }
-        foreach ($path in $result.Installed) { Write-Log $log "Installed: $path" }
-        Write-Log $log 'Restart the client, then enable the plugins you want.'
-        Complete-HubProgress $form
-        Set-HubStatus $form "Installed $($result.Installed.Count). Restart the client before using them." 'ok'
-        return $true
-    } catch {
-        Hide-HubProgress $form
-        Write-Log $log $_.Exception.Message
-        Set-HubStatus $form $_.Exception.Message 'error'
-        return $false
-    } finally {
-        $form.Tag.Busy = $false
-        Update-PluginCardStatus $form
     }
 }
 
@@ -948,6 +1082,9 @@ function Update-LibraryLayout($form) {
     $footerH = 64
 
     $form.Tag.Header.SetBounds(0, 0, $w, $headerH)
+    if ($null -ne $form.Tag.Subtitle) {
+        $form.Tag.Subtitle.Width = [Math]::Max(280, ($w - 100))
+    }
     if ($null -ne $form.Tag.GitHubLink) {
         $form.Tag.GitHubLink.Location = New-Object System.Drawing.Point(200, 70)
         $form.Tag.MicrobotLink.Location = New-Object System.Drawing.Point(($form.Tag.GitHubLink.Right + 16), 70)
@@ -975,26 +1112,20 @@ function Update-LibraryLayout($form) {
 
     $btnY = $h - 52
     $form.Tag.ShortcutLink.Location = New-Object System.Drawing.Point(28, ($btnY + 10))
-    $install = $form.Tag.InstallButton
-    $install.Location = New-Object System.Drawing.Point(($w - 28 - $install.Width), $btnY)
     $close = $form.Tag.CloseButton
-    $close.Location = New-Object System.Drawing.Point(($install.Left - $close.Width - 20), ($btnY + 10))
-    $uninstall = $form.Tag.UninstallButton
-    $uninstall.Location = New-Object System.Drawing.Point(($close.Left - $uninstall.Width - 18), ($btnY + 10))
-    $updateAll = $form.Tag.UpdateAllButton
-    if ($null -ne $updateAll) {
-        $updateAll.Location = New-Object System.Drawing.Point(($uninstall.Left - $updateAll.Width - 16), $btnY)
-    }
+    $close.Location = New-Object System.Drawing.Point(($w - 28 - $close.Width), ($btnY + 10))
+    Update-PluginCardLayout $form
 }
 
 function New-LibraryForm {
     $form = New-Object System.Windows.Forms.Form
     $form.Text = 'Micro Hub'
     $form.StartPosition = 'CenterScreen'
-    $form.FormBorderStyle = 'FixedSingle'
-    $form.MaximizeBox = $false
-    $form.MinimizeBox = $false
-    $form.ClientSize = New-Object System.Drawing.Size(760, 620)
+    $form.FormBorderStyle = 'Sizable'
+    $form.MaximizeBox = $true
+    $form.MinimizeBox = $true
+    $form.MinimumSize = New-Object System.Drawing.Size(900, 560)
+    $form.ClientSize = New-Object System.Drawing.Size(1100, 720)
     $form.BackColor = $script:ColorBg
     $form.ForeColor = $script:ColorText
     $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
@@ -1033,7 +1164,7 @@ function New-LibraryForm {
     $title.Location = New-Object System.Drawing.Point(78, 14)
 
     $subtitle = New-Object System.Windows.Forms.Label
-    $subtitle.Text = 'Turn plugins on to install them. Updates apply here when the client closes.'
+    $subtitle.Text = 'Toggle plugins on to install, off to remove. Updates apply when the client closes.'
     $subtitle.Font = New-Object System.Drawing.Font('Segoe UI', 9)
     $subtitle.ForeColor = $script:ColorMuted
     $subtitle.BackColor = $script:ColorBg
@@ -1150,32 +1281,6 @@ function New-LibraryForm {
     $shortcutLink.Cursor = [System.Windows.Forms.Cursors]::Hand
     Update-ShortcutLink $shortcutLink
 
-    $updateAllButton = New-SetupButton 'Update all' 'danger'
-    $updateAllButton.Size = New-Object System.Drawing.Size(120, 40)
-    $updateAllButton.ForeColor = $script:ColorAccent
-    $updateAllButton.FlatAppearance.BorderColor = $script:ColorAccent
-
-    $installButton = New-SetupButton 'Install selected' 'primary'
-    $installButton.Size = New-Object System.Drawing.Size(168, 40)
-    $installButton.Add_EnabledChanged({
-        param($sender, $e)
-        if ($sender.Enabled) {
-            $sender.BackColor = $script:ColorAccent
-            $sender.ForeColor = [System.Drawing.Color]::Black
-        } else {
-            $sender.BackColor = $script:ColorCardEdge
-            $sender.ForeColor = $script:ColorMuted
-        }
-    })
-
-    $uninstallButton = New-Object System.Windows.Forms.Label
-    $uninstallButton.Text = 'Uninstall'
-    $uninstallButton.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9)
-    $uninstallButton.ForeColor = $script:ColorMuted
-    $uninstallButton.BackColor = $script:ColorBg
-    $uninstallButton.AutoSize = $true
-    $uninstallButton.Cursor = [System.Windows.Forms.Cursors]::Hand
-
     $closeButton = New-Object System.Windows.Forms.Label
     $closeButton.Text = 'Close'
     $closeButton.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9)
@@ -1189,12 +1294,10 @@ function New-LibraryForm {
     $form.Tag = @{
         Cards = $cards
         Header = $header
+        Subtitle = $subtitle
         SelectAll = $selectAll
         ClearSelection = $clearSelection
         List = $list
-        InstallButton = $installButton
-        UpdateAllButton = $updateAllButton
-        UninstallButton = $uninstallButton
         CloseButton = $closeButton
         ShortcutLink = $shortcutLink
         Warning = $warning
@@ -1216,19 +1319,11 @@ function New-LibraryForm {
     }
 
     $selectAll.Add_Click({
-        foreach ($card in $form.Tag['Cards']) {
-            if ($card.Tag.Available) { $card.Tag.Checked = $true }
-            $card.Invalidate()
-        }
-        Update-PluginCardStatus $form
+        Set-BulkPluginDesired $form $log $true
     }.GetNewClosure())
 
     $clearSelection.Add_Click({
-        foreach ($card in $form.Tag['Cards']) {
-            $card.Tag.Checked = $false
-            $card.Invalidate()
-        }
-        Update-PluginCardStatus $form
+        Set-BulkPluginDesired $form $log $false
     }.GetNewClosure())
 
     $detailsLink.Add_Click({
@@ -1263,76 +1358,14 @@ function New-LibraryForm {
         Update-LibraryLayout $form
     }.GetNewClosure())
 
-    $installButton.Add_Click({
-        Update-PluginCardStatus $form
-        $names = @(Get-CheckedJarNames $form)
-        if ($names.Count -eq 0) { return }
-        [void] (Invoke-InstallPlugins $form $log $names)
-    }.GetNewClosure())
-
-    $updateAllButton.Add_Click({
-        Update-PluginCardStatus $form
-        $outdated = @(Get-OutdatedLibraryJars)
-        if ($outdated.Count -eq 0) {
-            $anyInstalled = $false
-            foreach ($jarName in @(Get-LibraryJarNames)) {
-                if ((Get-InstalledCopy $jarName).Count -gt 0) { $anyInstalled = $true; break }
-            }
-            if ($anyInstalled) {
-                Set-HubStatus $form 'All plugins are up to date.' 'ok'
-                Write-Log $log 'All plugins are up to date.'
-            } else {
-                Set-HubStatus $form 'No plugins are installed yet.' 'idle'
-                Write-Log $log 'No plugins are installed yet. Turn some on and use Install selected.'
-            }
-            return
-        }
-        [void] (Invoke-InstallPlugins $form $log $outdated)
-    }.GetNewClosure())
-
-    $uninstallButton.Add_Click({
-        Update-PluginCardStatus $form
-        if (Test-ClientRunning) {
-            $form.Tag.Warning.Visible = $true
-            Update-LibraryLayout $form
-            Set-HubStatus $form 'Close the game client first. Uninstall will wait until it closes.' 'wait'
-            Write-Log $log 'Uninstall is waiting for the game client to close.'
-            return
-        }
-        $names = @(Get-CheckedJarNames $form)
-        $present = @($names | Where-Object { (Get-InstalledCopy $_).Count -gt 0 })
-        if ($present.Count -eq 0) {
-            Write-Log $log 'None of the selected plugins are installed.'
-            Set-HubStatus $form 'None of the selected plugins are installed.' 'idle'
-            return
-        }
-        $form.Tag.Busy = $true
-        try {
-            Show-HubProgress $form $names.Count
-            $removed = @(Uninstall-Library $names {
-                param($step, $total, $jarName)
-                Set-HubStatus $form ("Removing $(Get-PluginLabel $jarName)") 'busy'
-                Advance-HubProgress $form ($step / [Math]::Max(1, $total))
-            })
-            foreach ($path in $removed) { Write-Log $log "Uninstalled: $path" }
-            Write-Log $log 'Other plugins were left in place.'
-            Complete-HubProgress $form
-            Set-HubStatus $form "Uninstalled $($removed.Count) file(s). Other plugins were left in place." 'ok'
-        } catch {
-            Hide-HubProgress $form
-            Write-Log $log $_.Exception.Message
-            Set-HubStatus $form $_.Exception.Message 'error'
-        } finally {
-            $form.Tag.Busy = $false
-            Update-PluginCardStatus $form
-        }
-    }.GetNewClosure())
-
     $header.Controls.AddRange(@($mark, $title, $subtitle, $teamLabel, $githubLink, $microbotLink))
     $form.Controls.AddRange(@(
         $header, $warning, $selectAll, $clearSelection, $list, $statusLine, $detailsLink, $progress, $log,
-        $shortcutLink, $updateAllButton, $uninstallButton, $closeButton, $installButton
+        $shortcutLink, $closeButton
     ))
+    $form.Add_Resize({
+        Update-LibraryLayout $form
+    }.GetNewClosure())
     Update-LibraryLayout $form
 
     $timer = New-Object System.Windows.Forms.Timer
@@ -1340,6 +1373,7 @@ function New-LibraryForm {
     $timer.Add_Tick({
         if ($form.Tag.Busy) { return }
         Update-PluginCardStatus $form
+        Invoke-PendingToggles $form $log
         Invoke-AutomaticUpdates $form $log
     }.GetNewClosure())
     $motion = New-Object System.Windows.Forms.Timer
@@ -1367,13 +1401,14 @@ function New-LibraryForm {
             Update-ExistingShortcutIcon
         }
         Update-ShortcutLink $shortcutLink
-        Write-Log $log 'Turn on the plugins you want. Turned off plugins are left alone.'
+        Write-Log $log 'Toggle a plugin on to install it, or off to remove it.'
         if (Test-DesktopShortcut) {
             Write-Log $log 'Desktop shortcut is on the desktop.'
         } else {
             Write-Log $log 'Add a desktop shortcut if you want to open this installer later.'
         }
-        Set-HubStatus $form 'Turn on the plugins you want.' 'idle'
+        Set-HubStatus $form 'Toggle plugins on or off.' 'idle'
+        Invoke-PendingToggles $form $log
         Invoke-AutomaticUpdates $form $log
         $timer.Start()
         $motion.Start()

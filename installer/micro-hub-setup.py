@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Linux setup window for Micro Hub.
 
-Follows the Windows installer: same plugin list, same RuneLite folders,
-and the same install, update, and uninstall rules.
+Follows the Windows installer: toggles install or remove plugins;
+outdated installed jars update automatically.
 """
 
 from __future__ import annotations
@@ -70,8 +70,15 @@ BLURBS = {
 }
 
 VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
-WINDOW_W = 760
-WINDOW_H = 620
+WINDOW_W = 1100
+WINDOW_H = 720
+WINDOW_MIN_W = 900
+WINDOW_MIN_H = 560
+CARD_GAP = 8
+CARD_PAD = 8
+CARD_HEIGHT = 46
+CARD_ROW_STRIDE = 52
+CARD_MIN_COL_WIDTH = 340
 
 
 def plugin_label(jar_name: str) -> str:
@@ -496,10 +503,18 @@ def show_library_setup(repo_root: Path) -> None:
             self.available = available
             self.available_version = version
             self.blurb = blurb
-            self.checked = bool(available)
-            self.knob = 1.0 if available else 0.0
-            self.pill_text = "Not installed" if available else "Missing"
-            self.pill_kind = "off" if available else "missing"
+            installed = available and app.plugin_installed(jar_name)
+            self.checked = installed
+            self.knob = 1.0 if installed else 0.0
+            if not available:
+                self.pill_text = "Missing"
+                self.pill_kind = "missing"
+            elif installed:
+                self.pill_text = "Installed"
+                self.pill_kind = "installed"
+            else:
+                self.pill_text = "Not installed"
+                self.pill_kind = "off"
             self.has_update = False
             self.bind("<Button-1>", self.on_click)
             self.bind("<Configure>", lambda _event: self.redraw())
@@ -507,8 +522,8 @@ def show_library_setup(repo_root: Path) -> None:
         def on_click(self, _event):
             if not self.available or self.app.busy:
                 return
-            self.checked = not self.checked
-            self.app.refresh_status()
+            desired = not self.app.desired_plugin_on(self.jar_name)
+            self.app.toggle_plugin(self.jar_name, desired)
 
         def redraw(self):
             self.delete("all")
@@ -615,16 +630,19 @@ def show_library_setup(repo_root: Path) -> None:
             self.progress_shown = 0.0
             self.update_wait_noted = False
             self.pending_update_applied = False
+            self.pending_toggles: dict[str, bool] = {}
             self.cards: list[PluginCard] = []
             self._motion = None
             self._poll = None
-            self.install_enabled = False
+            self._last_root_size = (0, 0)
 
             self.root = tk.Tk()
             self.root.title("Micro Hub")
             self.root.configure(bg=BG)
-            self.root.resizable(False, False)
+            self.root.minsize(WINDOW_MIN_W, WINDOW_MIN_H)
+            self.root.resizable(True, True)
             self.root.geometry(f"{WINDOW_W}x{WINDOW_H}")
+            self.root.bind("<Configure>", self._on_root_configure)
             families = set(tkfont.families())
             for name in ("Segoe UI", "Ubuntu", "DejaVu Sans", "Sans"):
                 if name in families:
@@ -643,7 +661,6 @@ def show_library_setup(repo_root: Path) -> None:
             self.name_font = tkfont.Font(family=self.ui_family, size=10, weight="bold")
             self.detail_font = tkfont.Font(family=self.ui_family, size=8)
             self.pill_font = tkfont.Font(family=self.ui_family, size=8, weight="bold")
-            self.button_font = tkfont.Font(family=self.ui_family, size=10, weight="bold")
 
             logo_path = repo_root / "installer" / "logo.png"
             self._images = []
@@ -657,7 +674,7 @@ def show_library_setup(repo_root: Path) -> None:
             else:
                 self.logo_image = None
 
-            self.header = tk.Frame(self.root, bg=BG, height=96, width=WINDOW_W)
+            self.header = tk.Frame(self.root, bg=BG, height=96)
             if self.logo_image is not None:
                 mark = tk.Label(self.header, image=self.logo_image, bg=BG, bd=0)
                 mark.place(x=24, y=18)
@@ -671,7 +688,7 @@ def show_library_setup(repo_root: Path) -> None:
             title.place(x=78, y=8)
             subtitle = tk.Label(
                 self.header,
-                text="Turn plugins on to install them. Updates apply here when the client closes.",
+                text="Toggle plugins on to install, off to remove. Updates apply when the client closes.",
                 font=self.ui_font,
                 fg=MUTED,
                 bg=BG,
@@ -769,15 +786,7 @@ def show_library_setup(repo_root: Path) -> None:
             )
             self.log.configure(state="disabled")
             self.shortcut = self._link("", MUTED, self.toggle_shortcut)
-            self.update_all = self._button(
-                "Update all", CARD, ACCENT, self.on_update_all, width=120
-            )
-            self.update_all.configure(highlightthickness=1, highlightbackground=ACCENT)
-            self.uninstall = self._link("Uninstall", MUTED, self.on_uninstall)
             self.close_link = self._link("Close", MUTED, self.close)
-            self.install_button = self._button(
-                "Install selected", ACCENT, "#000000", self.on_install, width=168
-            )
 
             self.root.protocol("WM_DELETE_WINDOW", self.close)
             self.root.bind("<Button-4>", self._wheel)
@@ -796,44 +805,12 @@ def show_library_setup(repo_root: Path) -> None:
             label.bind("<Button-1>", lambda _e: command())
             return label
 
-        def _button(self, text, bg, fg, command, width):
-            label = tk.Label(
-                self.root,
-                text=text,
-                font=self.button_font,
-                fg=fg,
-                bg=bg,
-                cursor="hand2",
-                width=width,
-            )
-            # width in text units is not pixels. Force a pixel width in layout.
-            label.configure(width=0)
-            label._pixel_width = width
-            label._bg = bg
-            label._fg = fg
-            label.bind("<Button-1>", lambda _e: command())
-            label.bind("<Enter>", lambda _e, widget=label: self._hover(widget, True))
-            label.bind("<Leave>", lambda _e, widget=label: self._hover(widget, False))
-            return label
-
-        def _hover(self, widget, entering):
-            if widget is self.install_button and not self.install_enabled:
-                return
-            if entering and widget is self.install_button:
-                widget.configure(bg="#ffff8c")
-            elif entering and widget is self.update_all:
-                widget.configure(bg="#2c2e36")
-            else:
-                widget.configure(bg=widget._bg)
-
         def _sync_scroll(self, _event=None):
             self.list_canvas.configure(scrollregion=self.list_canvas.bbox("all"))
 
         def _stretch_cards(self, event):
             self.list_canvas.itemconfigure(self.cards_window, width=event.width)
-            for card in self.cards:
-                card.configure(width=max(200, event.width - 16))
-                card.redraw()
+            self.layout_cards()
 
         def _wheel(self, event):
             widget = self.root.winfo_containing(event.x_root, event.y_root)
@@ -864,9 +841,45 @@ def show_library_setup(repo_root: Path) -> None:
             }
             self.status.configure(text=message, fg=colors.get(kind, MUTED))
 
+        def _on_root_configure(self, event):
+            if event.widget is not self.root:
+                return
+            size = (event.width, event.height)
+            if size == self._last_root_size:
+                return
+            self._last_root_size = size
+            self.layout()
+
+        def card_grid_metrics(self, list_width: int) -> tuple[int, int]:
+            inner = max(200, list_width - CARD_PAD)
+            cols = 2 if inner >= ((CARD_MIN_COL_WIDTH * 2) + CARD_GAP) else 1
+            card_width = max(200, int((inner - ((cols - 1) * CARD_GAP)) / cols))
+            return cols, card_width
+
+        def layout_cards(self):
+            if not self.cards:
+                return
+            list_width = max(200, self.list_canvas.winfo_width())
+            cols, card_width = self.card_grid_metrics(list_width)
+            for index, card in enumerate(self.cards):
+                col = index % cols
+                row = index // cols
+                x = CARD_PAD + (col * (card_width + CARD_GAP))
+                y = 4 + (row * CARD_ROW_STRIDE)
+                card.place(x=x, y=y, width=card_width, height=CARD_HEIGHT)
+                card.configure(width=card_width, height=CARD_HEIGHT)
+                card.redraw()
+            rows = (len(self.cards) + cols - 1) // cols
+            frame_h = 4 + (rows * CARD_ROW_STRIDE) + 4
+            self.cards_frame.configure(width=list_width, height=frame_h)
+            bbox = self.list_canvas.bbox("all")
+            if bbox is not None:
+                self.list_canvas.configure(scrollregion=bbox)
+
         def layout(self):
-            width = WINDOW_W
-            height = WINDOW_H
+            self.root.update_idletasks()
+            width = max(WINDOW_MIN_W, self.root.winfo_width())
+            height = max(WINDOW_MIN_H, self.root.winfo_height())
             header_h = 96
             banner_h = 40 if self.warning_visible else 0
             toolbar_h = 32
@@ -909,21 +922,10 @@ def show_library_setup(repo_root: Path) -> None:
                 self.log.place_forget()
             btn_y = height - 52
             self.shortcut.place(x=28, y=btn_y + 10)
-            install_w = self.install_button._pixel_width
-            self.install_button.place(
-                x=width - 28 - install_w, y=btn_y, width=install_w, height=40
-            )
             self.root.update_idletasks()
             close_w = max(48, self.close_link.winfo_reqwidth())
-            close_x = self.install_button.winfo_x() - close_w - 20
-            self.close_link.place(x=close_x, y=btn_y + 10)
-            uninstall_w = max(64, self.uninstall.winfo_reqwidth())
-            uninstall_x = close_x - uninstall_w - 18
-            self.uninstall.place(x=uninstall_x, y=btn_y + 10)
-            update_w = self.update_all._pixel_width
-            self.update_all.place(
-                x=uninstall_x - update_w - 16, y=btn_y, width=update_w, height=40
-            )
+            self.close_link.place(x=width - 28 - close_w, y=btn_y + 10)
+            self.layout_cards()
 
         def draw_progress(self):
             canvas = self.progress
@@ -985,17 +987,31 @@ def show_library_setup(repo_root: Path) -> None:
                     self.library.available_version(jar_name),
                     BLURBS.get(jar_name, "Library plugin"),
                 )
-                card.pack(fill="x", padx=8, pady=(4, 2))
                 card.bind("<Button-4>", lambda e: self.list_canvas.yview_scroll(-3, "units"))
                 card.bind("<Button-5>", lambda e: self.list_canvas.yview_scroll(3, "units"))
                 self.cards.append(card)
             self.root.update_idletasks()
+            self.layout_cards()
+
+        def plugin_installed(self, jar_name: str) -> bool:
+            return bool(
+                self.library.installed_jar_paths(jar_name)
+                or self.library.legacy_installed(jar_name)
+            )
+
+        def desired_plugin_on(self, jar_name: str) -> bool:
+            if jar_name in self.pending_toggles:
+                return self.pending_toggles[jar_name]
+            return self.plugin_installed(jar_name)
+
+        def sync_card_checked(self):
             for card in self.cards:
-                card.configure(width=max(200, self.list_canvas.winfo_width() - 16))
-                card.redraw()
+                if not card.available:
+                    card.checked = False
+                else:
+                    card.checked = self.desired_plugin_on(card.jar_name)
 
         def refresh_status(self):
-            checked = []
             for card in self.cards:
                 jar_name = card.jar_name
                 version = card.available_version
@@ -1016,42 +1032,18 @@ def show_library_setup(repo_root: Path) -> None:
                     card.pill_text = "Not installed"
                     card.pill_kind = "off"
                     card.has_update = False
+                card.checked = self.desired_plugin_on(jar_name)
                 card.redraw()
-                if card.checked and card.available:
-                    checked.append(jar_name)
-            self.install_enabled = len(checked) > 0
-            if self.install_enabled:
-                self.install_button.configure(bg=ACCENT, fg="#000000", cursor="hand2")
-                self.install_button._bg = ACCENT
-            else:
-                self.install_button.configure(bg=EDGE, fg=MUTED, cursor="arrow")
-                self.install_button._bg = EDGE
-            if checked:
-                self.uninstall.configure(fg=MUTED, cursor="hand2")
-            else:
-                self.uninstall.configure(fg="#5c5c5c", cursor="arrow")
             running = self.library.client_running()
             if self.warning_visible != running:
                 self.warning_visible = running
                 self.layout()
 
-        def checked_names(self) -> list[str]:
-            return [
-                card.jar_name
-                for card in self.cards
-                if card.checked and card.available
-            ]
-
         def select_all_cards(self):
-            for card in self.cards:
-                if card.available:
-                    card.checked = True
-            self.refresh_status()
+            self.set_bulk_desired(True)
 
         def clear_cards(self):
-            for card in self.cards:
-                card.checked = False
-            self.refresh_status()
+            self.set_bulk_desired(False)
 
         def toggle_details(self):
             self.details_open = not self.details_open
@@ -1082,115 +1074,115 @@ def show_library_setup(repo_root: Path) -> None:
             self.update_shortcut_link()
             self.layout()
 
-        def on_install(self):
-            if self.busy or not self.install_enabled:
-                return
-            self.refresh_status()
-            names = self.checked_names()
-            if not names:
-                return
-            self.install_plugins(names)
-
-        def on_update_all(self):
+        def toggle_plugin(self, jar_name: str, desired_on: bool):
             if self.busy:
                 return
+            self.pending_toggles[jar_name] = desired_on
+            self.sync_card_checked()
             self.refresh_status()
-            outdated = self.library.outdated()
-            if not outdated:
-                if self.library.any_installed():
-                    self.set_status("All plugins are up to date.", "ok")
-                    self.write_log("All plugins are up to date.")
+            if self.library.client_running():
+                self.warning_visible = True
+                self.layout()
+                label = plugin_label(jar_name)
+                message = (
+                    f"{label} will install when the client closes."
+                    if desired_on
+                    else f"{label} will uninstall when the client closes."
+                )
+                self.set_status(message, "wait")
+                self.write_log(message)
+                return
+            self.apply_pending_toggles()
+
+        def set_bulk_desired(self, desired_on: bool):
+            if self.busy:
+                return
+            queued = 0
+            for card in self.cards:
+                if not card.available:
+                    continue
+                if self.desired_plugin_on(card.jar_name) == desired_on:
+                    continue
+                self.pending_toggles[card.jar_name] = desired_on
+                queued += 1
+            if queued == 0:
+                return
+            self.sync_card_checked()
+            self.refresh_status()
+            if self.library.client_running():
+                self.warning_visible = True
+                self.layout()
+                message = (
+                    "Selected plugins will install when the client closes."
+                    if desired_on
+                    else "Selected plugins will uninstall when the client closes."
+                )
+                self.set_status(message, "wait")
+                self.write_log(message)
+                return
+            self.apply_pending_toggles()
+
+        def apply_pending_toggles(self):
+            if self.busy or not self.pending_toggles:
+                return
+            if self.library.client_running():
+                return
+            to_install: list[str] = []
+            to_remove: list[str] = []
+            for jar_name, want in list(self.pending_toggles.items()):
+                have = self.plugin_installed(jar_name)
+                if want and not have:
+                    to_install.append(jar_name)
+                elif not want and have:
+                    to_remove.append(jar_name)
                 else:
-                    self.set_status("No plugins are installed yet.", "idle")
-                    self.write_log(
-                        "No plugins are installed yet. Turn some on and use Install selected."
-                    )
-                return
-            self.install_plugins(outdated)
-
-        def on_uninstall(self):
-            if self.busy:
-                return
-            self.refresh_status()
-            if self.library.client_running():
-                self.warning_visible = True
-                self.layout()
-                self.set_status(
-                    "Close the game client first. Uninstall will wait until it closes.",
-                    "wait",
-                )
-                self.write_log("Uninstall is waiting for the game client to close.")
-                return
-            names = self.checked_names()
-            present = [name for name in names if self.library.installed_jar_paths(name)]
-            if not present:
-                self.write_log("None of the selected plugins are installed.")
-                self.set_status("None of the selected plugins are installed.", "idle")
-                return
-            self.busy = True
-            try:
-                self.show_progress(len(names))
-
-                def on_step(step, total, jar_name):
-                    self.set_status(f"Removing {plugin_label(jar_name)}", "busy")
-                    self.advance_progress(step / max(1, total))
-
-                removed = self.library.uninstall(names, on_step)
-                for path in removed:
-                    self.write_log(f"Uninstalled: {path}")
-                self.write_log("Other plugins were left in place.")
-                self.complete_progress()
-                self.set_status(
-                    f"Uninstalled {len(removed)} file(s). Other plugins were left in place.",
-                    "ok",
-                )
-            except Exception as exc:
-                self.hide_progress()
-                self.write_log(str(exc))
-                self.set_status(str(exc), "error")
-            finally:
-                self.busy = False
+                    self.pending_toggles.pop(jar_name, None)
+            if not to_install and not to_remove:
+                self.sync_card_checked()
                 self.refresh_status()
-
-        def install_plugins(self, names: list[str]) -> bool:
-            if not names:
-                return False
-            if self.library.client_running():
-                self.warning_visible = True
-                self.layout()
-                self.set_status(
-                    "Close the game client first. Install will wait until it closes.",
-                    "wait",
-                )
-                self.write_log("Install is waiting for the game client to close.")
-                return False
+                return
             self.busy = True
+            total = max(1, len(to_install) + len(to_remove))
             try:
-                self.show_progress(len(names))
+                self.show_progress(total)
+                remove_base = 0
+                if to_remove:
 
-                def on_step(step, total, jar_name):
-                    self.set_status(f"Installing {plugin_label(jar_name)}", "busy")
-                    self.advance_progress(step / max(1, total))
+                    def on_remove(step, _count, jar_name):
+                        self.set_status(f"Removing {plugin_label(jar_name)}", "busy")
+                        self.advance_progress(step / total)
 
-                removed, installed = self.library.install(names, on_step)
-                for path in removed:
-                    self.write_log(f"Removed old copy: {path}")
-                for path in installed:
-                    self.write_log(f"Installed: {path}")
+                    removed = self.library.uninstall(to_remove, on_remove)
+                    for path in removed:
+                        self.write_log(f"Uninstalled: {path}")
+                    remove_base = len(to_remove)
+                if to_install:
+
+                    def on_install(step, _count, jar_name):
+                        self.set_status(f"Installing {plugin_label(jar_name)}", "busy")
+                        self.advance_progress((remove_base + step) / total)
+
+                    removed, installed = self.library.install(to_install, on_install)
+                    for path in removed:
+                        self.write_log(f"Removed old copy: {path}")
+                    for path in installed:
+                        self.write_log(f"Installed: {path}")
+                for jar_name in to_install + to_remove:
+                    self.pending_toggles.pop(jar_name, None)
                 self.write_log("Restart the client, then enable the plugins you want.")
                 self.complete_progress()
                 self.set_status(
-                    f"Installed {len(installed)}. Restart the client before using them.",
+                    "Plugin changes applied. Restart the client before using them.",
                     "ok",
                 )
-                return True
             except Exception as exc:
                 self.hide_progress()
                 self.write_log(str(exc))
                 self.set_status(str(exc), "error")
-                return False
+                self.pending_toggles.clear()
             finally:
                 self.busy = False
+                self.sync_card_checked()
                 self.refresh_status()
 
         def automatic_updates(self):
@@ -1264,6 +1256,7 @@ def show_library_setup(repo_root: Path) -> None:
         def poll(self):
             if not self.busy:
                 self.refresh_status()
+                self.apply_pending_toggles()
                 self.automatic_updates()
             self._poll = self.root.after(1500, self.poll)
 
@@ -1275,23 +1268,26 @@ def show_library_setup(repo_root: Path) -> None:
             if self.library.shortcut_exists():
                 self.library.update_existing_shortcut_icon()
             self.update_shortcut_link()
-            self.write_log("Turn on the plugins you want. Turned off plugins are left alone.")
+            self.write_log("Toggle a plugin on to install it, or off to remove it.")
             if self.library.shortcut_exists():
                 self.write_log("Desktop shortcut is on the desktop.")
             else:
                 self.write_log("Add a desktop shortcut if you want to open this installer later.")
-            self.set_status("Turn on the plugins you want.", "idle")
+            self.set_status("Toggle plugins on or off.", "idle")
+            self.apply_pending_toggles()
             self.automatic_updates()
             self.poll()
             self.animate()
 
         def center(self):
             self.root.update_idletasks()
+            width = max(WINDOW_MIN_W, self.root.winfo_width())
+            height = max(WINDOW_MIN_H, self.root.winfo_height())
             screen_w = self.root.winfo_screenwidth()
             screen_h = self.root.winfo_screenheight()
-            x = max(0, (screen_w - WINDOW_W) // 2)
-            y = max(0, (screen_h - WINDOW_H) // 2)
-            self.root.geometry(f"{WINDOW_W}x{WINDOW_H}+{x}+{y}")
+            x = max(0, (screen_w - width) // 2)
+            y = max(0, (screen_h - height) // 2)
+            self.root.geometry(f"{width}x{height}+{x}+{y}")
 
         def close(self):
             if self._motion is not None:
