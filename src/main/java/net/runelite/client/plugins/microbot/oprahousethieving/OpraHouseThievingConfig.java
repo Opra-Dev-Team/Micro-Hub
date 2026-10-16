@@ -9,7 +9,8 @@ import net.runelite.client.plugins.microbot.util.misc.Rs2Food;
         "The plugin will pickpocket until max house keys gathered and then thieve houses until the min house keys remain. <br/>" +
         "It will steal from wealthy citizens near Aurelia until a distracted citizen event occurs, prioritize that. <br/>" +
         "Using Rogue's outfit is recommended, and food is recommended while dodgy necklaces are optional.<br/>" +
-        "World hop can be enabled to not require food at all, but maybe slower in gathering house keys.<br/>"
+        "World hop can be enabled to not require food at all, but maybe slower in gathering house keys.<br/>" +
+        "Auto Gear equips Rogue's outfit and a Graceful cape from the Civitas bank.<br/>"
 )
 public interface OpraHouseThievingConfig extends Config {
     String configGroup = "opra-house-thieving";
@@ -24,6 +25,8 @@ public interface OpraHouseThievingConfig extends Config {
     String onlyPickpocketDistracted = "onlyPickpocketDistracted";
     String worldHopForDistractedCitizens = "worldHopForDistractedCitizens";
     String worldHopWaitTime = "worldHopWaitTime";
+    String autoGear = "autoGear";
+    String bankPin = "bankPin";
 
     @ConfigSection(
             name = "House Thieving Settings",
@@ -140,5 +143,28 @@ public interface OpraHouseThievingConfig extends Config {
     )
     default int worldHopWaitTime() {
         return 5;
+    }
+
+    @ConfigItem(
+            keyName = autoGear,
+            name = "Auto Gear",
+            description = "Bank at Civitas on start to equip the best Rogue and Graceful pieces you own, and withdraw valuables and house keys.",
+            position = 11,
+            section = generalSection
+    )
+    default boolean autoGear() {
+        return false;
+    }
+
+    @ConfigItem(
+            keyName = bankPin,
+            name = "Bank PIN",
+            description = "Your 4-digit bank PIN. Leave empty if you have no PIN. Hidden by default.",
+            secret = true,
+            position = 12,
+            section = generalSection
+    )
+    default String bankPin() {
+        return "";
     }
 }

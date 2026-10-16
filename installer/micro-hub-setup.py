@@ -64,7 +64,7 @@ BLURBS = {
     "MoltenGlassPlugin.jar": "Smelts molten glass at the Edgeville furnace.",
     "FlaxPickerPlugin.jar": "Picks flax at Nemus Retreat and can spin it.",
     "OpraMotherlodePlugin.jar": "Mines paydirt in the Motherlode Mine.",
-    "OpraHouseThievingPlugin.jar": "Pickpockets wealthy citizens and thieves houses in Varlamore.",
+    "OpraHouseThievingPlugin.jar": "Varlamore house thieving: fast doors, window escapes, shine claims, optional auto gear and banking.",
     "OpraBlastFurnacePlugin.jar": "Smelts bars at the Blast Furnace.",
     "SweetcornChefPlugin.jar": "Picks, cooks, and drops sweetcorn at Kastori.",
 }

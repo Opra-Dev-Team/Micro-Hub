@@ -26,7 +26,7 @@ import java.awt.*;
 )
 @Slf4j
 public class OpraHouseThievingPlugin extends Plugin {
-    public static final String version = "1.0.1";
+    public static final String version = "1.1.0";
     @Inject
     private OpraHouseThievingConfig config;
 
@@ -67,6 +67,17 @@ public class OpraHouseThievingPlugin extends Plugin {
         // "You can't spot anything else worth taking from the <furniture>." => current piece is emptied, switch.
         if (houseThievingScript != null && event.getMessage().toLowerCase().contains("worth taking")) {
             houseThievingScript.onValuablesExhausted();
+        }
+        if (houseThievingScript != null && event.getMessage().toLowerCase().contains("homeowner coming back")) {
+            houseThievingScript.onHomeownerReturning();
+        }
+        String message = event.getMessage().toLowerCase();
+        if (houseThievingScript != null && message.contains("shine somewhere else")) {
+            houseThievingScript.onShine();
+        }
+        if (houseThievingScript != null
+                && (message.contains("caught red handed") || message.contains("kicked out"))) {
+            houseThievingScript.onKickedOut();
         }
     }
 }

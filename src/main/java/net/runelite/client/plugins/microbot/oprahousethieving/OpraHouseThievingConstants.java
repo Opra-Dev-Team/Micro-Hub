@@ -33,6 +33,8 @@ public class OpraHouseThievingConstants {
     public final static WorldPoint BANKING_TILE_LOCATION = new WorldPoint(1648, 3119, 0);
 
     public final static int LOCKED_DOOR_ID = 51998;
+    public final static int UNLOCKED_DOOR_ID = 51999;
+    public final static int ESCAPE_WINDOW_ID = 52998;
 
     // Searchable valuables inside the houses: wardrobes, chests, glass case, jewellery case (ObjectID 52002-52011).
     // Windows (52000-52001) and staircases (52012-52013) are deliberately excluded.
