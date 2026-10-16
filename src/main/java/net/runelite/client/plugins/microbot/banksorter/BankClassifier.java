@@ -263,7 +263,7 @@ final class BankClassifier {
         }
         if (containsAny(name, RAW_MEATS)) return "Gathering-Raw-Meat";
         if (name.contains("wine of zamorak")) return "Farming-Secondary";
-        if (isFood(processedName, options)) return "Food-Cooked";
+        if (isFood(processedName)) return "Food-Cooked";
         if (name.equals("cake tin") || name.equals("pie dish")) return productionToolCategory(name);
         if (name.contains("imcando hammer") || name.equals("hammer")) return "Tool-Smithing";
         if (isProductionTool(name)) return productionToolCategory(name);
@@ -437,10 +437,14 @@ final class BankClassifier {
         if (name.equals("druid pouch")) return "Farming-Supply";
         if (name.contains("red vine worm")) return "Tool-Fishing";
         if (isUnique(name)) return "Unique";
-        if (options.tight() && name.equals("goblin mail")) return "Armour-Body";
-        if (options.tight() && name.contains("looting bag")) return "Combat-Misc";
-        if (options.tight() && isDye(name)) return "Production-Other";
-        if (name.contains("quest") || (name.contains("key") && !name.contains("crystal key"))) return "Quest-Items";
+        String useful = usefulMiscCategory(name);
+        if (useful != null) {
+            return useful;
+        }
+        if (name.contains("quest") || (name.contains("key") && !name.contains("crystal key")
+                && !name.contains("brimstone key"))) {
+            return "Quest-Items";
+        }
         String leftover = leftoverCategory(name);
         if (leftover != null) {
             return leftover;
@@ -596,7 +600,7 @@ final class BankClassifier {
                 || processed.contains("enchanted lyre");
     }
 
-    private static boolean isFood(String processed, OrganizeOptions options) {
+    private static boolean isFood(String processed) {
         if (processed.contains("wine of zamorak") || processed.equals("cake tin") || processed.equals("pie dish")
                 || processed.contains("seed") || processed.contains("sapling") || processed.contains("potion")
                 || processed.contains("paint") || processed.contains("glass")) {
@@ -605,7 +609,7 @@ final class BankClassifier {
         if (processed.equals("cabbage") || processed.equals("onion") || processed.startsWith("apples")) {
             return true;
         }
-        if (options.tight() && isMissedFood(processed)) {
+        if (isMissedFood(processed)) {
             return true;
         }
         for (String food : FOOD) {
@@ -620,7 +624,11 @@ final class BankClassifier {
         return processed.equals("tomato")
                 || processed.equals("banana")
                 || processed.equals("baguette")
-                || processed.contains("triangle sandwich");
+                || processed.contains("triangle sandwich")
+                || processed.contains("square sandwich")
+                || processed.equals("cooked sweetcorn")
+                || processed.equals("lava eel")
+                || processed.equals("strange fruit");
     }
 
     private static boolean isDrink(String processed) {
@@ -630,6 +638,7 @@ final class BankClassifier {
         }
         return containsTerm(processed, "beer")
                 || containsTerm(processed, "ale")
+                || containsTerm(processed, "stout")
                 || containsTerm(processed, "cider")
                 || containsTerm(processed, "grog")
                 || containsTerm(processed, "wine")
@@ -669,6 +678,65 @@ final class BankClassifier {
 
     private static boolean isDye(String name) {
         return name.equals("dye") || name.endsWith(" dye");
+    }
+
+    /**
+     * Useful items that used to fall through to Misc on the default iron layout.
+     * Quest props stay uncategorized so they remain on the junk tab.
+     */
+    private static String usefulMiscCategory(String name) {
+        if (name.contains("spirit flakes") || name.equals("tiny net")) {
+            return "Tool-Fishing";
+        }
+        if (name.contains("ogre bellows") || name.equals("lockpick") || name.equals("trowel")
+                || name.contains("specimen brush") || name.equals("iron spit")
+                || name.contains("diving apparatus") || name.contains("bullseye lantern")
+                || name.contains("lantern lens") || name.contains("sapphire lantern")
+                || name.contains("reinforced goggles") || name.contains("rogue kit")) {
+            return "Tool-Other";
+        }
+        if (name.contains("coal bag") || name.contains("prospector jacket") || name.contains("prospector legs")) {
+            return "Tool-Mining";
+        }
+        if (name.contains("forestry kit")) {
+            return "Tool-Woodcutting";
+        }
+        if (name.equals("clockwork") || name.equals("charcoal") || name.contains("crushed gem")
+                || name.equals("bag of salt") || name.equals("fur") || name.contains("shark paint")
+                || isDye(name)) {
+            return "Production-Other";
+        }
+        if (name.contains("ecto-token") || name.equals("ectotoken")) {
+            return "Supplies-Other";
+        }
+        if (name.contains("earmuffs") || name.contains("looting bag") || name.contains("brimstone key")) {
+            return "Combat-Misc";
+        }
+        if (name.equals("gadderhammer") || name.contains("keris")) {
+            return "Weapon-Melee";
+        }
+        if (name.contains("ava's attractor") || name.contains("avas attractor")) {
+            return "Armour-Cape";
+        }
+        if (name.equals("goblin mail") || name.contains("zamorak monk top") || name.contains("rogue top")) {
+            return "Armour-Body";
+        }
+        if (name.contains("zamorak monk bottom") || name.contains("rogue trousers")) {
+            return "Armour-Legs";
+        }
+        if (name.equals("barley") || name.equals("grain") || name.contains("insect repellent")) {
+            return "Farming-Supply";
+        }
+        if (name.contains("ground cod") || name.contains("ground giant crab meat") || name.equals("termites")) {
+            return "Farming-Secondary";
+        }
+        if (name.equals("tiara") || name.equals("spell scroll") || name.contains("abyssal pearl")) {
+            return "Magic-Other";
+        }
+        if (name.equals("abyssal book")) {
+            return "Weapon-Magic";
+        }
+        return null;
     }
 
     private static boolean isTightProductionExtra(String name) {

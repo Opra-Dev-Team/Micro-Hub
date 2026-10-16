@@ -97,7 +97,7 @@ class BankClassifierTest {
         assertHome("Box trap", BankHomeTab.PRODUCTION);
         assertHome("Blue wizard hat", BankHomeTab.COMBAT);
         assertHome("Onion seed", BankHomeTab.FARMING);
-        assertHome("Tomato", BankHomeTab.JUNK);
+        assertHome("Tomato", BankHomeTab.SUPPLIES);
     }
 
     @Test
@@ -249,6 +249,33 @@ class BankClassifierTest {
     }
 
     @Test
+    void filesUsefulJunkOnTheDefaultLayout() {
+        assertEquals("Tool-Fishing", item("Spirit flakes").getCategory());
+        assertHome("Spirit flakes", BankHomeTab.PRODUCTION);
+        assertEquals("Tool-Mining", item("Coal bag").getCategory());
+        assertHome("Coal bag", BankHomeTab.PRODUCTION);
+        assertEquals("Armour-Cape", item("Ava's attractor").getCategory());
+        assertHome("Ava's attractor", BankHomeTab.COMBAT);
+        assertEquals("Combat-Misc", item("Brimstone key").getCategory());
+        assertHome("Brimstone key", BankHomeTab.COMBAT);
+        assertEquals("Magic-Other", item("Tiara").getCategory());
+        assertHome("Tiara", BankHomeTab.RUNES);
+        assertEquals("Production-Other", item("Blue dye").getCategory());
+        assertHome("Blue dye", BankHomeTab.PRODUCTION);
+        assertEquals("Food-Cooked", item("Lava eel").getCategory());
+        assertHome("Strange fruit", BankHomeTab.SUPPLIES);
+        assertEquals("Food-Cooked", item("Dwarven stout(m)").getCategory());
+        assertHome("Ecto-token", BankHomeTab.SUPPLIES);
+        assertHome("Barley", BankHomeTab.FARMING);
+        assertEquals("Farming-Secondary", item("Termites").getCategory());
+        assertEquals("Weapon-Magic", item("Abyssal book").getCategory());
+        assertHome("Spell scroll", BankHomeTab.RUNES);
+        assertHome("Looting bag", BankHomeTab.COMBAT);
+        assertHome("Bone key", BankHomeTab.JUNK);
+        assertEquals("Miscellaneous", item("Diary").getCategory());
+    }
+
+    @Test
     void tightLayoutPullsKnownLeftovers() {
         OrganizeOptions.use(OrganizeOptions.defaults().withLayout(OrganizeOptions.Layout.TIGHT));
         assertEquals("Food-Cooked", item("Tomato").getCategory());
@@ -351,7 +378,7 @@ class BankClassifierTest {
 
     @Test
     void falseFoodAndDrinkMatchesStayOutOfSupplies() {
-        assertEquals("Miscellaneous", item("Shark paint").getCategory());
+        assertEquals("Production-Other", item("Shark paint").getCategory());
         assertEquals("Production-Glass", item("Beer glass").getCategory());
         assertEquals("Farming-Secondary", item("Blue dragon scale").getCategory());
         assertEquals("Food-Cooked", item("Nettle tea").getCategory());

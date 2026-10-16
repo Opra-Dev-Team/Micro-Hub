@@ -1,0 +1,13 @@
+---
+description: After Micro-Hub changes, build the jars and install them into the live Microbot client and the setup GUI
+alwaysApply: true
+---
+
+# Deploy Micro-Hub changes into the game
+
+When a change in this repo affects a plugin or the setup GUI, finish by installing it. Do not leave the update only in source.
+
+1. Build the changed plugin jar into `dist/`. The task name is the plugin class plus `Jar`, for example `gradlew BankSorterPluginJar --offline`. Use `gradlew build` only when several plugins or `dist/library.txt` changed. Skip plugins that fail for an unrelated missing dependency.
+2. Copy each new jar from `dist/<Name>.jar` to `%USERPROFILE%\.runelite\microbot-plugins\<Name>.jar`. That folder is what Microbot loads. The setup GUI (`installer/OpraMicroHub-Setup.bat`) reads the same `dist/` jars, so the build updates the GUI list too.
+3. If Windows has the jar locked, ask Dani to close the client, then copy again. A running client keeps the old plugin until it is restarted.
+4. Tell Dani the jar was copied and that the client must be restarted before the change is in game.

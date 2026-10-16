@@ -7,11 +7,11 @@ Organizes an ironman-style 8-tab bank, then sorts each category as a contiguous 
 - **1 Supplies:** teleports, potions by dose, cooked food, drinks when they have their own block, and waterskins when leftovers are filed
 - **2 Combat:** weapons, armour, ammo, sets
 - **3 Gathering Materials:** raw fish and meat, ores, logs, uncut gems, bones, hides. Raw fish can instead sit with food on Supplies.
-- **4 Production Tools:** skilling tools, moulds, bars, planks, leather, glass, textiles
+- **4 Production Tools:** skilling tools, moulds, bars, planks, leather, glass, textiles, plus spirit flakes, coal bags, forestry kits, prospector gear, dyes, and shark paint
 - **5 Runes / Magic:** runes, pouches, essence, non-teleport tablets
 - **6 Farming / Herblore:** herbs, seeds, saplings, secondaries, farming supplies, plus spores, bird houses, and nettles when leftovers are filed
 - **7 Clues / Uniques:** clues when that placement is selected, non-combat uniques, holiday rares
-- **8 Misc / Junk:** quest items and anything that still has no category
+- **8 Misc / Junk:** quest items, burnt food, and anything that still has no category. Cooked food, drinks, skilling tools, and other useful supplies are filed into a real tab instead.
 - **Main:** coins, platinum tokens, bonds, and clues when that placement is selected
 
 ## Settings
@@ -19,7 +19,7 @@ Organizes an ironman-style 8-tab bank, then sorts each category as a contiguous 
 The Layout section is in the plugin config.
 
 - **Speed:** Fast is the default. It confirms the drag and moves on, and it ignores the saved min and max delay. Careful waits that delay after every drag.
-- **Layout:** Iron 8-tab is the default. Tight iron groups each tab by family (weapon, patch, fish, nails, and so on) and pulls leftovers such as tomato, unfinished potions, dyes, marks of grace, and sawmill coupons into a real tab.
+- **Layout:** Iron 8-tab is the default. Tight iron groups each tab by family (weapon, patch, fish, nails, and so on) and pulls unfinished potions, marks of grace, and sawmill coupons into a real tab. Tomato, dyes, goblin mail, and the looting bag are filed on the default layout.
 - **Clues:** Main tab or Clues tab. Scrolls, scroll boxes, caskets, key halves, and clue hunter gear stay together. The default is the main tab, so boxes and caskets that used to sit on tab 7 move once.
 - **Teleport jewellery:** Supplies or Combat. Supplies also picks up passage necklaces, explorer's rings, and lyres. Chronicle stays on Supplies.
 - **Drinks:** With food, or their own block on Supplies after the food. Ale and tea join that choice, including nettle tea. Wine of zamorak stays with herblore. Beer glasses stay with glass.

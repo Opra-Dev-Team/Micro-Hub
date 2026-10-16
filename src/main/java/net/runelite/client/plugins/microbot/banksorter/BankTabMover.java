@@ -4,8 +4,11 @@ import net.runelite.api.InventoryID;
 import net.runelite.api.Item;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
+import net.runelite.api.Point;
 import net.runelite.api.Varbits;
 import net.runelite.api.widgets.Widget;
+import net.runelite.client.plugins.antidrag.AntiDragConfig;
+import net.runelite.client.plugins.antidrag.AntiDragPlugin;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.Global;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
@@ -24,8 +27,14 @@ final class BankTabMover {
     static final int PLACEHOLDER_BUTTON = 786472;
     static final int PLACEHOLDER_SPRITE_ON = 179;
     private static final int BANK_GROUP_ID = 12;
+    private static final int BANK_ITEM_CONTAINER_CHILD_ID = 12;
     private static final int BANK_INSERT_BUTTON_CHILD_ID = 17;
-    private static final int BANK_TAB_CONTAINER_DYNAMIC_MAIN_INDEX = 10;
+    static final int ITEM_WINDOW_INSET = 4;
+    static final int BANK_TAB_CONTAINER_DYNAMIC_MAIN_INDEX = 10;
+    private static final int NEW_TAB_ATTEMPTS = 3;
+    private static final int NEW_TAB_CONFIRM_MS = 2000;
+    /** Client default from Anti Drag when the plugin is not overriding. One client tick is 20ms. */
+    private static final int CLIENT_DRAG_DELAY_TICKS = 5;
     private static final int[] TAB_COUNT_VARBITS = {
             Varbits.BANK_TAB_ONE_COUNT,
             Varbits.BANK_TAB_TWO_COUNT,
@@ -208,14 +217,15 @@ final class BankTabMover {
         }
         Rectangle source = itemBounds(sourceRef.slot, item.getId(), true);
         Rectangle target = destTabBounds(destTab);
-        if (!inCanvas(source) || !inCanvas(target)) {
-            Microbot.log("Exact source or destination bounds unavailable for " + item.getOriginalName());
+        if (!fullyInside(itemWindow(), source) || !inCanvas(target)) {
+            Microbot.log("Exact source or destination bounds unavailable for " + item.getOriginalName()
+                    + " source=" + source + " target=" + target);
             return false;
         }
         int beforeDest = destTab == 0 ? mainApproxCount() : tabCount(destTab);
         int beforeSource = sourceRef.tab > 0 ? tabCount(sourceRef.tab) : 0;
         int qty = quantityFor(item.getId());
-        Microbot.drag(source, target);
+        dragBankItem(sourceRef.slot, source, target);
         int src = sourceRef.tab;
         return waitUntil(() -> {
             if (quantityFor(item.getId()) != qty) {
@@ -232,57 +242,121 @@ final class BankTabMover {
     }
 
     static boolean dragToNewTab(BankSortItem item) {
-        SourceRef sourceRef = locateSource(item);
-        if (sourceRef == null) {
-            Microbot.log("Could not locate visible source widget for " + item.getOriginalName());
-            return false;
-        }
-        int beforeReal = realTabCount();
-        if (beforeReal >= 9) {
-            return false;
-        }
-        int newTabIndex = beforeReal + 1;
-        int beforeCount = tabCount(newTabIndex);
-        int beforeSource = sourceRef.tab > 0 ? tabCount(sourceRef.tab) : 0;
-        int quantity = quantityFor(item.getId());
-        if (!revealSlot(sourceRef.slot, item.getId())) {
-            return false;
-        }
-        Rectangle source = itemBounds(sourceRef.slot, item.getId(), true);
-        int dynamic = BANK_TAB_CONTAINER_DYNAMIC_MAIN_INDEX + beforeReal + 1;
-        Rectangle target = dynamicTabBounds(dynamic);
-        if (!inCanvas(source) || !inCanvas(target)) {
-            Microbot.log("New-tab target or source bounds unavailable for " + item.getOriginalName()
-                    + " at widget index " + dynamic);
-            return false;
-        }
-        Microbot.drag(source, target);
-        boolean verified = waitUntil(() ->
-                tabCount(newTabIndex) > beforeCount
-                        && (sourceRef.tab <= 0 || tabCount(sourceRef.tab) < beforeSource)
-                        && quantityFor(item.getId()) == quantity
-                        && tabForItem(item.getId()) == newTabIndex, 5000);
-        if (!verified) {
+        for (int attempt = 1; attempt <= NEW_TAB_ATTEMPTS; attempt++) {
+            int beforeReal = realTabCount();
+            if (beforeReal >= 9) {
+                return false;
+            }
+            int newTabIndex = beforeReal + 1;
+            int beforeCount = tabCount(newTabIndex);
+            if (beforeCount > 0 && tabForItem(item.getId()) == newTabIndex) {
+                return true;
+            }
+            SourceRef sourceRef = locateSource(item);
+            if (sourceRef == null) {
+                Microbot.log("Could not locate visible source widget for " + item.getOriginalName()
+                        + " (attempt " + attempt + ")");
+                continue;
+            }
+            int beforeSource = sourceRef.tab > 0 ? tabCount(sourceRef.tab) : 0;
+            int quantity = quantityFor(item.getId());
+            if (!revealSlot(sourceRef.slot, item.getId())) {
+                Microbot.log("Source not in bank window for " + item.getOriginalName()
+                        + " slot=" + sourceRef.slot + " (attempt " + attempt + ")");
+                continue;
+            }
+            Rectangle source = itemBounds(sourceRef.slot, item.getId(), true);
+            NewTabTarget target = findNewTabTarget(beforeReal);
+            if (!fullyInside(itemWindow(), source) || target == null || !inCanvas(target.bounds)) {
+                Microbot.log("New-tab target or source bounds unavailable for " + item.getOriginalName()
+                        + " at widget index " + (target == null ? -1 : target.index)
+                        + " source=" + source
+                        + " plus=" + (target == null ? null : target.bounds)
+                        + " (attempt " + attempt + ")");
+                continue;
+            }
+            dragBankItem(sourceRef.slot, source, target.bounds);
+            boolean verified = waitUntil(() ->
+                    tabCount(newTabIndex) > beforeCount
+                            && (sourceRef.tab <= 0 || tabCount(sourceRef.tab) < beforeSource)
+                            && quantityFor(item.getId()) == quantity
+                            && tabForItem(item.getId()) == newTabIndex,
+                    NEW_TAB_CONFIRM_MS,
+                    true);
+            if (verified) {
+                return true;
+            }
             Microbot.log("New-tab drag was not verified for " + item.getOriginalName()
-                    + " into tab " + newTabIndex);
+                    + " into tab " + newTabIndex
+                    + " source=" + source
+                    + " plus=" + target.bounds
+                    + " (attempt " + attempt + ")");
         }
-        return verified;
+        return false;
+    }
+
+    /**
+     * Clears the client drag delay for this gesture so the item is picked up even when
+     * Anti Drag, or the built-in 5-tick delay, is longer than the mouse hold.
+     * The delay is restored after the drag returns.
+     */
+    static void dragBankItem(int sourceSlot, Rectangle source, Rectangle target) {
+        DragDelay saved = clearDragDelay(sourceSlot);
+        try {
+            Microbot.getMouse().drag(centerPoint(source), centerPoint(target));
+        } finally {
+            restoreDragDelay(sourceSlot, saved);
+        }
+    }
+
+    /**
+     * The item icon must sit inside the bank item window. A rectangle that only ends
+     * inside the game canvas can still be the tab bar or a slot scrolled above the view.
+     */
+    static boolean fullyInside(Rectangle container, Rectangle item) {
+        if (container == null || item == null || item.width <= 0 || item.height <= 0
+                || container.width <= ITEM_WINDOW_INSET * 2 || container.height <= ITEM_WINDOW_INSET * 2) {
+            return false;
+        }
+        int left = container.x + ITEM_WINDOW_INSET;
+        int top = container.y + ITEM_WINDOW_INSET;
+        int right = container.x + container.width - ITEM_WINDOW_INSET;
+        int bottom = container.y + container.height - ITEM_WINDOW_INSET;
+        return item.x >= left
+                && item.y >= top
+                && item.x + item.width <= right
+                && item.y + item.height <= bottom;
+    }
+
+    /**
+     * Child index of the plus button. Prefers the widget whose action is "New tab".
+     * Falls back to the slot after the last real tab when that action is missing.
+     */
+    static int newTabDynamicIndex(List<String[]> actions, int realTabCount) {
+        int found = dynamicChildWithAction(actions, "new tab");
+        if (found >= 0) {
+            return found;
+        }
+        return BANK_TAB_CONTAINER_DYNAMIC_MAIN_INDEX + realTabCount + 1;
+    }
+
+    static int dynamicChildWithAction(List<String[]> actions, String action) {
+        if (actions == null || action == null) {
+            return -1;
+        }
+        String needle = action.toLowerCase();
+        for (int i = 0; i < actions.size(); i++) {
+            if (containsAction(actions.get(i), needle)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     static Rectangle destTabBounds(int destTab) {
         return Microbot.getClientThread().runOnClientThreadOptional(() -> {
             Widget tab = Rs2Bank.getTabWidget(destTab);
             return tab == null ? null : new Rectangle(tab.getBounds());
-        }).orElse(null);
-    }
-
-    private static Rectangle dynamicTabBounds(int dynamicIndex) {
-        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
-            List<Widget> tabs = Rs2Bank.getTabs();
-            if (dynamicIndex < 0 || dynamicIndex >= tabs.size()) {
-                return null;
-            }
-            return new Rectangle(tabs.get(dynamicIndex).getBounds());
         }).orElse(null);
     }
 
@@ -302,8 +376,15 @@ final class BankTabMover {
      * Fast mode polls every 50ms and gives up after 800ms. Careful mode keeps the longer confirm window.
      */
     static boolean waitUntil(BooleanSupplier condition, int carefulTimeoutMs) {
-        boolean fast = OrganizeOptions.current().fast();
-        int timeout = fast ? 800 : carefulTimeoutMs;
+        return waitUntil(condition, carefulTimeoutMs, false);
+    }
+
+    /**
+     * @param ignoreFast tab creation must wait out the varbit even in Fast mode
+     */
+    private static boolean waitUntil(BooleanSupplier condition, int timeoutMs, boolean ignoreFast) {
+        boolean fast = !ignoreFast && OrganizeOptions.current().fast();
+        int timeout = fast ? 800 : timeoutMs;
         int poll = fast ? 50 : 100;
         long deadline = System.currentTimeMillis() + timeout;
         while (true) {
@@ -317,17 +398,127 @@ final class BankTabMover {
         }
     }
 
-    private static boolean revealSlot(int slot, int itemId) {
-        if (inCanvas(itemBounds(slot, itemId, true))) {
+    private static int lastLoggedDeadTime = Integer.MIN_VALUE;
+
+    private static DragDelay clearDragDelay(int sourceSlot) {
+        int inventoryDelay = clientInventoryDragDelay();
+        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Widget item = Rs2Bank.getItemWidget(sourceSlot);
+            int deadTime = item == null ? 0 : item.getDragDeadTime();
+            if (deadTime != lastLoggedDeadTime) {
+                Microbot.log("Cleared bank drag delay deadTime=" + deadTime + " inventoryDelay=" + inventoryDelay);
+                lastLoggedDeadTime = deadTime;
+            }
+            if (item != null) {
+                item.setDragDeadTime(0);
+            }
+            Microbot.getClient().setInventoryDragDelay(0);
+            return new DragDelay(deadTime, inventoryDelay, item != null);
+        }).orElse(null);
+    }
+
+    /**
+     * This client exposes {@code setInventoryDragDelay} only. The live value is the Anti Drag
+     * setting while that plugin is overriding, and 5 client ticks otherwise.
+     */
+    private static int clientInventoryDragDelay() {
+        try {
+            if (Microbot.getConfigManager() == null || !Microbot.isPluginEnabled(AntiDragPlugin.class)) {
+                return CLIENT_DRAG_DELAY_TICKS;
+            }
+            AntiDragConfig antiDrag = Microbot.getConfigManager().getConfig(AntiDragConfig.class);
+            if (antiDrag == null || antiDrag.onShiftOnly()) {
+                return CLIENT_DRAG_DELAY_TICKS;
+            }
+            return Math.max(0, antiDrag.dragDelay());
+        } catch (Exception ex) {
+            return CLIENT_DRAG_DELAY_TICKS;
+        }
+    }
+
+    private static void restoreDragDelay(int sourceSlot, DragDelay saved) {
+        if (saved == null) {
+            return;
+        }
+        Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            if (saved.hadWidget) {
+                Widget item = Rs2Bank.getItemWidget(sourceSlot);
+                if (item != null) {
+                    item.setDragDeadTime(saved.deadTime);
+                }
+            }
+            Microbot.getClient().setInventoryDragDelay(saved.inventoryDelay);
+            return true;
+        });
+    }
+
+    private static NewTabTarget findNewTabTarget(int realTabCount) {
+        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            List<Widget> tabs = Rs2Bank.getTabs();
+            if (tabs == null || tabs.isEmpty()) {
+                return null;
+            }
+            List<String[]> actions = new ArrayList<>(tabs.size());
+            for (Widget tab : tabs) {
+                actions.add(tab == null ? null : tab.getActions());
+            }
+            int index = newTabDynamicIndex(actions, realTabCount);
+            if (index < 0 || index >= tabs.size() || tabs.get(index) == null || tabs.get(index).isHidden()) {
+                return null;
+            }
+            Rectangle bounds = tabs.get(index).getBounds();
+            if (bounds == null || bounds.width <= 0 || bounds.height <= 0) {
+                return null;
+            }
+            return new NewTabTarget(index, new Rectangle(bounds));
+        }).orElse(null);
+    }
+
+    private static Point centerPoint(Rectangle bounds) {
+        int x = bounds.x + Math.max(0, bounds.width - 1) / 2;
+        int y = bounds.y + Math.max(0, bounds.height - 1) / 2;
+        return new Point(x, y);
+    }
+
+    private static Rectangle itemWindow() {
+        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Widget container = Microbot.getClient().getWidget(BANK_GROUP_ID, BANK_ITEM_CONTAINER_CHILD_ID);
+            if (container == null || container.isHidden()) {
+                return null;
+            }
+            Rectangle bounds = container.getBounds();
+            if (bounds == null || bounds.width <= 0 || bounds.height <= 0) {
+                return null;
+            }
+            return new Rectangle(bounds);
+        }).orElse(null);
+    }
+
+    private static boolean containsAction(String[] actions, String needleLower) {
+        if (actions == null) {
+            return false;
+        }
+        for (String action : actions) {
+            if (action != null && action.toLowerCase().contains(needleLower)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static boolean revealSlot(int slot, int itemId) {
+        if (itemInWindow(slot, itemId)) {
             return true;
         }
         if (!scrollToSlot(slot)) {
             return false;
         }
-        if (!OrganizeOptions.current().fast()) {
-            Global.sleep(200);
-        }
-        return true;
+        Global.sleep(OrganizeOptions.current().fast() ? 100 : 200);
+        return itemInWindow(slot, itemId);
+    }
+
+    private static boolean itemInWindow(int slot, int itemId) {
+        return fullyInside(itemWindow(), itemBounds(slot, itemId, true));
     }
 
     private static boolean scrollToSlot(int slot) {
@@ -500,6 +691,28 @@ final class BankTabMover {
             this.name = name;
             this.classificationId = classificationId;
             this.classificationName = classificationName;
+        }
+    }
+
+    private static final class DragDelay {
+        private final int deadTime;
+        private final int inventoryDelay;
+        private final boolean hadWidget;
+
+        private DragDelay(int deadTime, int inventoryDelay, boolean hadWidget) {
+            this.deadTime = deadTime;
+            this.inventoryDelay = inventoryDelay;
+            this.hadWidget = hadWidget;
+        }
+    }
+
+    private static final class NewTabTarget {
+        private final int index;
+        private final Rectangle bounds;
+
+        private NewTabTarget(int index, Rectangle bounds) {
+            this.index = index;
+            this.bounds = bounds;
         }
     }
 

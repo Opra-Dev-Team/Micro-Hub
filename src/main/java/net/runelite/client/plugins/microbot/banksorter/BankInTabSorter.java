@@ -1,9 +1,7 @@
 package net.runelite.client.plugins.microbot.banksorter;
 
 import net.runelite.client.plugins.microbot.Microbot;
-import net.runelite.client.plugins.microbot.util.Global;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
-import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 import java.awt.Rectangle;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -95,7 +93,7 @@ final class BankInTabSorter {
             if (from == null || to == null) {
                 continue;
             }
-            Microbot.drag(from, to);
+            BankTabMover.dragBankItem(sourceSlot, from, to);
             boolean ok = BankTabMover.waitUntil(() ->
                     itemIdAtSlot(targetSlot) == desired.getId(), 4000);
             if (ok) {
@@ -151,22 +149,7 @@ final class BankInTabSorter {
     }
 
     private static boolean revealSlot(int slot, int itemId) {
-        Rectangle bounds = itemBounds(slot, itemId);
-        if (bounds != null && Rs2UiHelper.isRectangleWithinCanvas(bounds)) {
-            return true;
-        }
-        if (!scrollToSlot(slot)) {
-            return false;
-        }
-        if (!OrganizeOptions.current().fast()) {
-            Global.sleep(80);
-        }
-        return true;
-    }
-
-    private static boolean scrollToSlot(int slot) {
-        return Microbot.getClientThread().runOnClientThreadOptional(() ->
-                Rs2Bank.scrollBankToSlot(slot)).orElse(false);
+        return BankTabMover.revealSlot(slot, itemId);
     }
 
     private static int compareSpecial(BankSortItem a, BankSortItem b) {

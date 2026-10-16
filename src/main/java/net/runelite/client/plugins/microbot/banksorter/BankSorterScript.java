@@ -20,6 +20,7 @@ import java.util.stream.Collectors;
 
 @Slf4j
 public class BankSorterScript extends Script {
+    private static final int SEEDS_PER_TAB = 3;
 
     @Inject
     private BankSorterPlugin plugin;
@@ -117,8 +118,8 @@ public class BankSorterScript extends Script {
                 }
                 debug.info("Bank ready realTabs=" + BankTabMover.realTabCount());
                 if (fullOrganize) {
-                    routeAll();
-                    if (!isStopRequested()) {
+                    boolean routed = routeAll();
+                    if (routed && !isStopRequested()) {
                         sortAllTabs();
                     }
                 } else {
@@ -127,7 +128,7 @@ public class BankSorterScript extends Script {
                 if (isStopRequested()) {
                     phase = "Stopped";
                     detail = "Cancelled";
-                } else {
+                } else if (!"Error".equals(phase)) {
                     phase = "Done";
                     detail = failures == 0 ? "Bank organized" : "Finished with " + failures + " skipped moves";
                 }
@@ -143,6 +144,8 @@ public class BankSorterScript extends Script {
                     }
                 }
             } finally {
+                String finishedPhase = phase;
+                String finishedDetail = detail;
                 try {
                     if (debug != null && Rs2Bank.isOpen()) {
                         phase = "Dump";
@@ -153,6 +156,11 @@ public class BankSorterScript extends Script {
                     }
                 } catch (Exception dumpEx) {
                     log.error("Debug dump failed", dumpEx);
+                }
+                if ("Error".equals(finishedPhase)) {
+                    phase = finishedPhase;
+                    detail = finishedDetail;
+                    Microbot.status = finishedDetail;
                 }
                 busy = false;
             }
@@ -185,7 +193,7 @@ public class BankSorterScript extends Script {
         return true;
     }
 
-    private void routeAll() {
+    private boolean routeAll() {
         phase = "Routing";
         final int MAX_ITEM_FAILURES = 3;
         Set<Integer> permSkipped = new HashSet<>();
@@ -196,9 +204,11 @@ public class BankSorterScript extends Script {
             debug.snapshot(items, "route");
 
             if (config.createMissingTabs()) {
-                ensureTabsExist(items);
+                if (!ensureTabsExist(items)) {
+                    return false;
+                }
                 if (isStopRequested()) {
-                    return;
+                    return false;
                 }
                 items = BankTabMover.snapshot();
             }
@@ -224,7 +234,7 @@ public class BankSorterScript extends Script {
             if (misplaced.isEmpty()) {
                 detail = permSkipped.isEmpty() ? "IDEMPOTENT: 0 misplaced" : "Routing finished (" + permSkipped.size() + " skipped)";
                 debug.info(detail + " realTabs=" + realTabs);
-                return;
+                return true;
             }
 
             BankSortItem next = misplaced.get(0);
@@ -255,13 +265,14 @@ public class BankSorterScript extends Script {
                 sleep(OrganizeOptions.current().fast() ? 50 : 400);
             }
         }
+        return false;
     }
 
-    private void ensureTabsExist(List<BankSortItem> items) {
+    private boolean ensureTabsExist(List<BankSortItem> items) {
         int existing = BankTabMover.realTabCount();
         if (existing >= 8) {
             debug.info("Skip tab creation: already have " + existing + " real tabs");
-            return;
+            return true;
         }
         int needed = Math.min(8,
                 items.stream()
@@ -271,39 +282,75 @@ public class BankSorterScript extends Script {
 
         while (BankTabMover.realTabCount() < needed && BankTabMover.realTabCount() < 8 && !isStopRequested()) {
             int nextTab = BankTabMover.realTabCount() + 1;
-            BankSortItem seed = pickSeedForNewTab(items, nextTab);
-            if (seed == null) {
+            List<BankSortItem> seeds = pickSeedsForNewTab(items, nextTab);
+            if (seeds.isEmpty()) {
                 debug.info("No main-tab item available to seed tab " + nextTab);
-                break;
+                failTabCreation(nextTab);
+                return false;
             }
-            detail = "Creating tab " + nextTab;
-            Microbot.status = detail;
-            debug.info("Creating tab " + nextTab + " with seed " + seed.getOriginalName());
-            if (!BankTabMover.dragToNewTab(seed)) {
+            boolean created = false;
+            for (BankSortItem seed : seeds) {
+                if (isStopRequested()) {
+                    return false;
+                }
+                detail = "Creating tab " + nextTab;
+                Microbot.status = detail;
+                debug.info("Creating tab " + nextTab + " with seed " + seed.getOriginalName());
+                if (BankTabMover.dragToNewTab(seed)) {
+                    created = true;
+                    break;
+                }
+                debug.info("Seed failed for tab " + nextTab + ": " + seed.getOriginalName());
+            }
+            if (!created) {
+                if (isStopRequested()) {
+                    return false;
+                }
                 failures++;
                 debug.info("Could not create tab " + nextTab);
-                break;
+                failTabCreation(nextTab);
+                return false;
             }
             done++;
             pauseAfterMove();
             items = BankTabMover.snapshot();
         }
+        return !isStopRequested();
     }
 
-    private BankSortItem pickSeedForNewTab(List<BankSortItem> items, int newTabIndex) {
+    private void failTabCreation(int nextTab) {
+        phase = "Error";
+        detail = "Could not create tab " + nextTab;
+        Microbot.status = detail;
+    }
+
+    private List<BankSortItem> pickSeedsForNewTab(List<BankSortItem> items, int newTabIndex) {
         List<BankSortItem> mainItems = items.stream()
                 .filter(item -> item.getCurrentTab() == 0)
+                .filter(item -> item.getQuantity() > 0)
                 .collect(Collectors.toList());
-
-        return mainItems.stream()
+        List<BankSortItem> seeds = new ArrayList<>();
+        addSeeds(seeds, mainItems.stream()
                 .filter(item -> item.getHomeTab().index == newTabIndex)
-                .findFirst()
-                .orElseGet(() ->
-                        mainItems.stream()
-                                .filter(item -> item.getHomeTab().index > BankTabMover.realTabCount())
-                                .findFirst()
-                                .orElseGet(() ->
-                                        mainItems.isEmpty() ? null : mainItems.get(0)));
+                .collect(Collectors.toList()));
+        int realTabs = BankTabMover.realTabCount();
+        addSeeds(seeds, mainItems.stream()
+                .filter(item -> item.getHomeTab().index > realTabs)
+                .collect(Collectors.toList()));
+        addSeeds(seeds, mainItems);
+        return seeds;
+    }
+
+    private static void addSeeds(List<BankSortItem> seeds, List<BankSortItem> candidates) {
+        for (BankSortItem candidate : candidates) {
+            if (seeds.size() >= SEEDS_PER_TAB) {
+                return;
+            }
+            boolean already = seeds.stream().anyMatch(seed -> seed.getId() == candidate.getId());
+            if (!already) {
+                seeds.add(candidate);
+            }
+        }
     }
 
     private void sortAllTabs() {
