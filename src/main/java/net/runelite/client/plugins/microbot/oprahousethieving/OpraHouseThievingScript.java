@@ -92,6 +92,9 @@ public class OpraHouseThievingScript extends StateMachineScript<OpraHouseThievin
     private int waitingOwnerDistance = -1;
     /** Every owner is home: we stand at this house's scout and keep scanning until a door locks. */
     private ThievingHouse waitingAt;
+    /** When we reached the wait scout, 0 until we stand on it. */
+    private long waitingSinceMs;
+    private long lastWaitLogMs;
     private String lastNoDoorPick;
     private WorldPoint cachedPathDestination;
     private List<WorldPoint> cachedPath;
@@ -103,6 +106,10 @@ public class OpraHouseThievingScript extends StateMachineScript<OpraHouseThievin
     static final int OWNER_AT_DOOR = 3;
     /** A closed house whose unlocked door we never saw counts as cycled after this long. */
     static final long CLOSED_MAX_MS = 60_000;
+    /** While every owner is home, how often the wait logs what it sees. */
+    private static final long WAIT_LOG_MS = 20_000;
+    /** A wait at one scout with nothing reopening moves on to the next scout after this long. */
+    static final long WAIT_ROTATE_MS = 45_000;
     /** A new unlocked sighting after this gap is logged. */
     private static final long UNLOCKED_LOG_GAP_MS = 10_000;
     private final static String HOUSE_KEYS = "House keys";
@@ -416,7 +423,7 @@ public class OpraHouseThievingScript extends StateMachineScript<OpraHouseThievin
 
         ScoutChoice choice = chooseScoutDoor(currentThievingHouse, sights, closedHouses());
         if (choice.move == ScoutMove.CLICK || choice.move == ScoutMove.APPROACH_DOOR) {
-            waitingAt = null;
+            setWaitingAt(null);
             Rs2TileObjectModel door = doors.get(choice.house);
             WorldPoint doorTile = door != null && door.getWorldLocation() != null
                     ? door.getWorldLocation()
@@ -440,6 +447,7 @@ public class OpraHouseThievingScript extends StateMachineScript<OpraHouseThievin
 
         if (player.distanceTo(currentThievingHouse.scoutPosition) <= 2) {
             if (waitingAt == currentThievingHouse) {
+                waitHeartbeat();
                 return;
             }
             ThievingHouse from = currentThievingHouse;
@@ -736,6 +744,9 @@ public class OpraHouseThievingScript extends StateMachineScript<OpraHouseThievin
             return true;
         }
         homeownerReturning = false;
+        if (!isInsideHouse(currentThievingHouse, Rs2Player.getWorldLocation())) {
+            return false;
+        }
         log.info("Homeowner returning, leaving {} for this lap", currentThievingHouse.npcName);
         closeHouse(currentThievingHouse);
         setNextThievingHouse();
@@ -844,9 +855,64 @@ public class OpraHouseThievingScript extends StateMachineScript<OpraHouseThievin
                 log.info("{} door locked again after the owner was home, owner {} tiles away, it is open to us",
                         house.npcName, owner);
                 watch.closedAt = 0;
-                waitingAt = null;
+                setWaitingAt(null);
             }
         }
+    }
+
+    private void setWaitingAt(ThievingHouse house) {
+        if (waitingAt == house) {
+            return;
+        }
+        waitingAt = house;
+        waitingSinceMs = 0;
+        lastWaitLogMs = 0;
+    }
+
+    /** Standing at the wait scout: log what we see now and then, and move to the next scout if nothing reopens. */
+    private void waitHeartbeat() {
+        long now = System.currentTimeMillis();
+        if (waitingSinceMs == 0) {
+            waitingSinceMs = now;
+            lastWaitLogMs = now;
+            return;
+        }
+        if (shouldRotateWait(waitingSinceMs, now)) {
+            ThievingHouse next = nextScout(waitingAt);
+            log.info("Waited {}s at {} scout, rotating to {} ({})",
+                    (now - waitingSinceMs) / 1000, waitingAt.npcName, next.npcName, describeWaitState());
+            setWaitingAt(next);
+            currentThievingHouse = next;
+            stepToward(next.scoutPosition);
+            return;
+        }
+        if (now - lastWaitLogMs >= WAIT_LOG_MS) {
+            lastWaitLogMs = now;
+            log.info("Waiting {}s at {} scout: {}",
+                    (now - waitingSinceMs) / 1000, waitingAt.npcName, describeWaitState());
+        }
+    }
+
+    private String describeWaitState() {
+        StringBuilder state = new StringBuilder();
+        for (ThievingHouse house : ThievingHouse.values()) {
+            HouseWatch watch = watch(house);
+            String door = findLockedDoor(house) != null ? "locked"
+                    : findUnlockedDoor(house) != null ? "unlocked" : "not found";
+            state.append(String.format("%s door=%s owner=%d closed=%s cycled=%s; ",
+                    house.npcName, door, ownerDistance(house), isClosed(house),
+                    isClosed(house) && watch.lastUnlockedAt >= watch.closedAt));
+        }
+        return state.toString().trim();
+    }
+
+    static boolean shouldRotateWait(long waitingSince, long now) {
+        return waitingSince > 0 && now - waitingSince >= WAIT_ROTATE_MS;
+    }
+
+    static ThievingHouse nextScout(ThievingHouse house) {
+        ThievingHouse[] houses = ThievingHouse.values();
+        return houses[(house.ordinal() + 1) % houses.length];
     }
 
     void onHomeownerReturning() {
@@ -1095,6 +1161,7 @@ public class OpraHouseThievingScript extends StateMachineScript<OpraHouseThievin
     }
 
     private void noteLeftHouse(ThievingHouse house) {
+        homeownerReturning = false;
         closeHouse(house);
         clearSearching();
         scoutDestination = null;
@@ -1410,11 +1477,11 @@ public class OpraHouseThievingScript extends StateMachineScript<OpraHouseThievin
                 log.info("All owners home, waiting at {} scout (closed={} cycled={})",
                         target.npcName, closed, cycled);
             }
-            waitingAt = target;
+            setWaitingAt(target);
             currentThievingHouse = target;
             return;
         }
-        waitingAt = null;
+        setWaitingAt(null);
         currentThievingHouse = next;
         if (previous != next) {
             log.info("Next house {} -> {} (locked={} closed={})", previous, next, locked, closed);
@@ -1751,7 +1818,9 @@ public class OpraHouseThievingScript extends StateMachineScript<OpraHouseThievin
         lastDoorScan = null;
         waitingOwnerHouse = null;
         waitingOwnerDistance = -1;
-        waitingAt = null;
+        setWaitingAt(null);
+        waitingSinceMs = 0;
+        lastWaitLogMs = 0;
         lastNoDoorPick = null;
         gearPending = false;
         gearChecked = false;

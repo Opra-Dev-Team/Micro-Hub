@@ -20,6 +20,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class OpraHouseThievingScriptTest {
 
     @Test
+    void waitRotatesOnlyAfterTheRotateTime() {
+        long since = 1_000_000L;
+        assertFalse(OpraHouseThievingScript.shouldRotateWait(since, since + OpraHouseThievingScript.WAIT_ROTATE_MS - 1));
+        assertTrue(OpraHouseThievingScript.shouldRotateWait(since, since + OpraHouseThievingScript.WAIT_ROTATE_MS));
+    }
+
+    @Test
+    void waitDoesNotRotateBeforeReachingTheScout() {
+        assertFalse(OpraHouseThievingScript.shouldRotateWait(0, 10_000_000L));
+    }
+
+    @Test
+    void scoutRotationFollowsThePatrolOrder() {
+        assertEquals(ThievingHouse.VICTOR, OpraHouseThievingScript.nextScout(ThievingHouse.LAVINIA));
+        assertEquals(ThievingHouse.CAIUS, OpraHouseThievingScript.nextScout(ThievingHouse.VICTOR));
+        assertEquals(ThievingHouse.LAVINIA, OpraHouseThievingScript.nextScout(ThievingHouse.CAIUS));
+    }
+
+    @Test
     void visibleDoorIsClickedInsteadOfPatrolling() {
         OpraHouseThievingScript.ScoutChoice choice = OpraHouseThievingScript.chooseScoutDoor(
                 ThievingHouse.CAIUS,
