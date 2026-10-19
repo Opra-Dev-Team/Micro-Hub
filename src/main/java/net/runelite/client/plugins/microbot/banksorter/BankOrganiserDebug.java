@@ -9,12 +9,15 @@ import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
-import java.nio.file.Files;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -26,28 +29,73 @@ import java.util.stream.Collectors;
 
 @Slf4j
 final class BankOrganiserDebug {
-    static final File WORKSPACE_DUMPS = new File("c:\\Development\\IDE-Projects\\microbot-bank-sorter\\debug-runs");
     static final File RUNELITE_DUMPS = new File(RuneLite.RUNELITE_DIR, "bank-sorter");
+    static final int KEEP_RUNS = 10;
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
     private final boolean verbose;
     private final List<String> lines = new ArrayList<>();
+    private File runDir;
+    private PrintWriter runLog;
 
     BankOrganiserDebug(boolean verbose) {
         this.verbose = verbose;
     }
 
+    /**
+     * Makes this run's folder now and appends run.log as lines arrive, so a run that is
+     * cancelled, for example by turning the plugin off, still leaves its log behind.
+     */
+    synchronized File startRun(File root) {
+        runDir = new File(root, LocalDateTime.now().format(STAMP));
+        runDir.mkdirs();
+        try {
+            runLog = new PrintWriter(new OutputStreamWriter(
+                    new FileOutputStream(new File(runDir, "run.log"), true), StandardCharsets.UTF_8));
+            for (String line : lines) {
+                runLog.println(line);
+            }
+            runLog.flush();
+        } catch (IOException e) {
+            log.error("Could not open run log in {}", runDir, e);
+            runLog = null;
+        }
+        pruneOldRuns(root, KEEP_RUNS);
+        return runDir;
+    }
+
+    synchronized void closeRun() {
+        if (runLog != null) {
+            runLog.close();
+            runLog = null;
+        }
+    }
+
+    private synchronized void append(String line) {
+        lines.add(line);
+        if (runLog != null) {
+            runLog.println(line);
+            runLog.flush();
+        }
+    }
+
     void info(String message) {
-        lines.add(message);
+        append(message);
         log.info("[Opra] {}", message);
         Microbot.log("[Opra] " + message);
+    }
+
+    /** Run log and client log, kept out of the Microbot log so per-move lines do not flood it. */
+    void trace(String message) {
+        append(message);
+        log.info("[Opra] {}", message);
     }
 
     void verbose(String message) {
         if (!verbose) {
             return;
         }
-        lines.add(message);
+        append(message);
     }
 
     void snapshot(List<BankSortItem> items, String label) {
@@ -85,24 +133,46 @@ final class BankOrganiserDebug {
     }
 
     File writeRunDump(List<BankSortItem> items, BankSorterPlugin plugin, boolean screenshots) {
-        String stamp = LocalDateTime.now().format(STAMP);
-        File runeliteDir = new File(RUNELITE_DUMPS, stamp);
-        File workspaceDir = new File(WORKSPACE_DUMPS, stamp);
-        runeliteDir.mkdirs();
-        workspaceDir.mkdirs();
-
-        writeLayout(runeliteDir, items);
-        writeLayout(workspaceDir, items);
-        writeLog(runeliteDir);
-        writeLog(workspaceDir);
-
-        if (screenshots && plugin != null && plugin.getDrawManager() != null) {
-            captureTabs(plugin, runeliteDir, workspaceDir);
+        File dir = runDir;
+        if (dir == null) {
+            dir = new File(RUNELITE_DUMPS, LocalDateTime.now().format(STAMP));
+            dir.mkdirs();
         }
 
-        info("Dump written to " + workspaceDir.getAbsolutePath());
-        info("Also written to " + runeliteDir.getAbsolutePath());
-        return workspaceDir;
+        writeLayout(dir, items);
+        if (screenshots && plugin != null && plugin.getDrawManager() != null && Rs2Bank.isOpen()) {
+            captureTabs(plugin, dir);
+        }
+        info("Dump written to " + dir.getAbsolutePath());
+        if (runLog == null) {
+            writeLog(dir);
+        }
+        pruneOldRuns(RUNELITE_DUMPS, KEEP_RUNS);
+        return dir;
+    }
+
+    /** Run folders are named by timestamp, so name order is age order. */
+    static void pruneOldRuns(File root, int keep) {
+        File[] runs = root.listFiles(File::isDirectory);
+        if (runs == null || runs.length <= keep) {
+            return;
+        }
+        Arrays.sort(runs, Comparator.comparing(File::getName));
+        for (int i = 0; i < runs.length - keep; i++) {
+            deleteTree(runs[i]);
+        }
+    }
+
+    private static void deleteTree(File file) {
+        File[] children = file.listFiles();
+        if (children != null) {
+            for (File child : children) {
+                deleteTree(child);
+            }
+        }
+        if (!file.delete()) {
+            log.debug("Could not delete {}", file);
+        }
     }
 
     private void writeLayout(File dir, List<BankSortItem> items) {
@@ -163,11 +233,11 @@ final class BankOrganiserDebug {
                 wrong == 0 ? "None. All items are in their home tabs.\n" : mismatches.toString());
     }
 
-    private void writeLog(File dir) {
+    private synchronized void writeLog(File dir) {
         writeText(new File(dir, "run.log"), String.join("\n", lines) + "\n");
     }
 
-    private void captureTabs(BankSorterPlugin plugin, File runeliteDir, File workspaceDir) {
+    private void captureTabs(BankSorterPlugin plugin, File dir) {
         int maxTab = Math.min(8, Math.max(0, BankTabMover.realTabCount()));
         for (int tab = 0; tab <= maxTab; tab++) {
             if (!BankTabMover.openTab(tab)) {
@@ -183,8 +253,7 @@ final class BankOrganiserDebug {
             String name = ("tab-" + tab + "-" + BankHomeTab.fromIndex(tab).label + ".png")
                     .replace(' ', '-')
                     .replaceAll("[\\\\/:*?\"<>|]", "-");
-            writePng(new File(runeliteDir, name), image);
-            writePng(new File(workspaceDir, name), image);
+            writePng(new File(dir, name), image);
             info("Screenshot " + name);
         }
     }
@@ -221,8 +290,10 @@ final class BankOrganiserDebug {
         }
     }
 
+    /** A plain file stream, since NIO channels refuse to write on an interrupted thread. */
     private static void writeText(File file, String content) {
-        try (PrintWriter writer = new PrintWriter(Files.newBufferedWriter(file.toPath()))) {
+        try (PrintWriter writer = new PrintWriter(new OutputStreamWriter(
+                new FileOutputStream(file), StandardCharsets.UTF_8))) {
             writer.write(content);
         } catch (IOException e) {
             log.error("Failed writing {}", file, e);

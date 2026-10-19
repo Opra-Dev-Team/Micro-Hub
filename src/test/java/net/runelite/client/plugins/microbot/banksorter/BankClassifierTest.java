@@ -3,6 +3,7 @@ package net.runelite.client.plugins.microbot.banksorter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -195,10 +196,34 @@ class BankClassifierTest {
     }
 
     @Test
-    void alreadyInOrderSkipsRearrange() {
+    void sortedTabPlansNoMoves() {
         List<BankSortItem> items = Arrays.asList(item("Needle"), item("Hammer"));
         List<BankSortItem> sorted = BankInTabSorter.sortItems(items);
-        assertTrue(BankInTabSorter.alreadyInOrder(sorted, BankInTabSorter.sortItems(sorted)));
+        int[] live = sorted.stream().mapToInt(BankSortItem::getId).toArray();
+        List<Integer> sortedIds = new ArrayList<>();
+        BankInTabSorter.sortItems(new ArrayList<>(sorted)).forEach(item -> sortedIds.add(item.getId()));
+        BankInTabSorter.TabKeys keys = BankInTabSorter.buildKeys(live, sortedIds);
+        assertTrue(BankSortPlanner.plan(keys.current, keys.desired).isEmpty());
+    }
+
+    @Test
+    void fillersAndUnknownSlotsStayAtTheEndOfTheTab() {
+        int filler = BankTabMover.BANK_FILLER_ID;
+        BankInTabSorter.TabKeys keys = BankInTabSorter.buildKeys(
+                new int[]{30, filler, 10, filler, 20}, Arrays.asList(10, 20, 30));
+
+        assertEquals(Arrays.asList(30, -1, 10, -2, 20), keys.current);
+        assertEquals(Arrays.asList(10, 20, 30, -1, -2), keys.desired);
+        assertEquals(2, BankSortPlanner.plan(keys.current, keys.desired).size());
+    }
+
+    @Test
+    void withdrawnItemIsDroppedFromTheDesiredOrder() {
+        BankInTabSorter.TabKeys keys = BankInTabSorter.buildKeys(
+                new int[]{20, 10}, Arrays.asList(10, 15, 20));
+
+        assertEquals(Arrays.asList(10, 20), keys.desired);
+        assertEquals(1, BankSortPlanner.plan(keys.current, keys.desired).size());
     }
 
     @Test
@@ -425,6 +450,41 @@ class BankClassifierTest {
                 item("Black med helm")
         ));
         assertEquals(Arrays.asList("black med helm", "steel med helm", "coif"), names(sorted));
+    }
+
+    @Test
+    void auditFixesFromTheLiveBankDump() {
+        assertCategory("Bow string", "Production-Textile");
+        assertCategory("Fresh crab shell", "Armour-Helmet");
+        assertCategory("Fresh crab claw", "Armour-Gloves");
+        assertCategory("Tiny port reward bag (port sarim)", "Miscellaneous");
+        assertCategory("Ancestral key", "Quest-Items");
+        assertCategory("Lobster pot", "Tool-Fishing");
+        assertCategory("Ruby amulet (u)", "Production-Jewellery");
+        assertCategory("Prospector helmet", "Tool-Mining");
+        assertCategory("Prospector boots", "Tool-Mining");
+        assertCategory("Yak-hide armour", "Armour-Body");
+        assertCategory("Silly jester hat", "Cosmetic/Holiday");
+        assertCategory("Silly jester tights", "Cosmetic/Holiday");
+        assertCategory("Zombie gloves", "Cosmetic/Holiday");
+        assertCategory("Zombie trousers", "Cosmetic/Holiday");
+        assertCategory("Camo helmet", "Cosmetic/Holiday");
+        assertCategory("Bomber jacket", "Cosmetic/Holiday");
+    }
+
+    @Test
+    void auditFixesKeepTheRealMatches() {
+        assertCategory("Ring of recoil", "Armour-Ring");
+        assertCategory("Warrior ring", "Armour-Ring");
+        assertCategory("Dragonfire ward", "Armour-Shield");
+        assertCategory("Ancestral hat", "Armour-Set-Magic");
+        assertCategory("Lobster", "Food-Cooked");
+        assertCategory("Herring", "Food-Cooked");
+        assertCategory("Watering can", "Farming-Supply");
+    }
+
+    private void assertCategory(String name, String expected) {
+        assertEquals(expected, item(name).getCategory(), name);
     }
 
     private void assertHome(String name, BankHomeTab expected) {

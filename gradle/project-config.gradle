@@ -9,7 +9,7 @@ project.ext.PLUGINS_INCLUDE_PATH = 'net/runelite/client/plugins/microbot'
 
 project.ext.GITHUB_CLIENT_RELEASE_BASE_URL = 'https://github.com/chsami/Microbot/releases/download'
 project.ext.MICROBOT_CLIENT_VERSION_ENDPOINT = 'https://microbot.cloud/api/version/client'
-project.ext.MICROBOT_CLIENT_VERSION = '2.6.9'
+project.ext.MICROBOT_CLIENT_VERSION = '2.6.31'
 
 project.ext.getPluginsSourcePath = { -> project.ext.PLUGINS_SOURCE_PATH }
 project.ext.getPluginsResourcePath = { -> project.ext.PLUGINS_RESOURCE_PATH }

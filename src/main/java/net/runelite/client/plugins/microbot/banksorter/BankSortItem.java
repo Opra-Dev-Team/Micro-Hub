@@ -68,4 +68,27 @@ public class BankSortItem {
         this.workflowStage = workflow[1];
         this.homeTab = BankClassifier.homeTab(this);
     }
+
+    /** Same item and classification at a new bank position. */
+    private BankSortItem(BankSortItem classified, int originalIndex, int quantity, int currentTab) {
+        this.id = classified.id;
+        this.classificationId = classified.classificationId;
+        this.originalName = classified.originalName;
+        this.originalIndex = originalIndex;
+        this.quantity = quantity;
+        this.currentTab = currentTab;
+        this.processedName = classified.processedName;
+        this.baseName = classified.baseName;
+        this.doseOrCharge = classified.doseOrCharge;
+        this.category = classified.category;
+        this.itemSetType = classified.itemSetType;
+        this.itemTier = classified.itemTier;
+        this.itemLevel = classified.itemLevel;
+        this.workflowStage = classified.workflowStage;
+        this.homeTab = classified.homeTab;
+    }
+
+    BankSortItem at(int slot, int quantity, int currentTab) {
+        return new BankSortItem(this, slot, quantity, currentTab);
+    }
 }

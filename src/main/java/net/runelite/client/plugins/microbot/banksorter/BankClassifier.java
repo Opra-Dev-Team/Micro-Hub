@@ -233,6 +233,10 @@ final class BankClassifier {
         if (name.contains("magic gold feather") || name.equals("bone key")) {
             return "Quest-Items";
         }
+        if (name.startsWith("prospector ")) return "Tool-Mining";
+        if (name.equals("fresh crab shell")) return "Armour-Helmet";
+        if (name.equals("fresh crab claw")) return "Armour-Gloves";
+        if (name.equals("yak-hide armour")) return "Armour-Body";
         if (name.equals("acorn") || name.endsWith(" seeds")) return "Farming-Seed";
         if (isEssencePouch(name)) return "Magic-Pouch";
         if (name.contains("fish barrel")) return "Gathering-Other";
@@ -338,7 +342,7 @@ final class BankClassifier {
             return "Armour-Gloves";
         }
         if (!options.jewelleryOnSupplies() && isTeleportJewellery(name)) {
-            if (name.contains("ring")) return "Armour-Ring";
+            if (containsWord(name, "ring")) return "Armour-Ring";
             return "Armour-Amulet";
         }
         if (name.contains("varrock armour") || name.contains("kandarin headgear")
@@ -376,15 +380,15 @@ final class BankClassifier {
             return "Armour-Legs";
         }
         if (name.contains("kiteshield") || name.contains("sq shield") || (name.contains("shield") && !name.contains("dragonfire ward"))
-                || name.contains("defender") || name.contains("toktz-ket-xil") || (name.contains("ward") && !name.contains("dwarf weed"))) {
+                || name.contains("defender") || name.contains("toktz-ket-xil") || containsWord(name, "ward")) {
             return "Armour-Shield";
         }
         if (name.contains("gloves") || name.contains("gauntlets") || name.contains("vambraces") || name.contains("bracers")) {
             return "Armour-Gloves";
         }
         if (name.contains("boots")) return "Armour-Boots";
-        if (name.contains("ring") && !name.contains("slayer") && !name.contains("ring of dueling")
-                && !name.contains("herring") && !name.contains("watering") && !name.contains("charos")) {
+        if (containsWord(name, "ring") && !name.contains("slayer") && !name.contains("ring of dueling")
+                && !name.contains("charos")) {
             return "Armour-Ring";
         }
         if (name.contains("ring of charos") || name.contains("charos")) return "Quest-Items";
@@ -478,7 +482,7 @@ final class BankClassifier {
         if (baseName.contains("mystic") && !baseName.contains("staff")) return "mystic";
         if (baseName.contains("infinity")) return "infinity";
         if (baseName.contains("ghostly")) return "ghostly";
-        if (baseName.contains("ancestral")) return "ancestral";
+        if (baseName.contains("ancestral") && !containsWord(baseName, "key")) return "ancestral";
         if (baseName.contains("splitbark")) return "splitbark";
         if (baseName.contains("swampbark")) return "swampbark";
         if (baseName.contains("bloodbark")) return "bloodbark";
@@ -603,7 +607,8 @@ final class BankClassifier {
     private static boolean isFood(String processed) {
         if (processed.contains("wine of zamorak") || processed.equals("cake tin") || processed.equals("pie dish")
                 || processed.contains("seed") || processed.contains("sapling") || processed.contains("potion")
-                || processed.contains("paint") || processed.contains("glass")) {
+                || processed.contains("paint") || processed.contains("glass")
+                || processed.contains("lobster pot")) {
             return false;
         }
         if (processed.equals("cabbage") || processed.equals("onion") || processed.startsWith("apples")) {
@@ -842,7 +847,7 @@ final class BankClassifier {
                 || name.contains("bloodbark")
                 || name.contains("infinity")
                 || name.contains("ghostly")
-                || name.contains("ancestral")
+                || (name.contains("ancestral") && !containsWord(name, "key"))
                 || name.equals("blue skirt")
                 || name.equals("black skirt")
                 || name.equals("pink skirt")
@@ -961,7 +966,7 @@ final class BankClassifier {
                 || name.startsWith("diamond ") || name.startsWith("dragonstone ")
                 || name.startsWith("onyx ") || name.startsWith("zenyte ");
         return material && (name.endsWith(" ring") || name.endsWith(" necklace")
-                || name.endsWith(" bracelet") || name.endsWith(" amulet"));
+                || name.endsWith(" bracelet") || name.endsWith(" amulet") || name.endsWith(" amulet (u)"));
     }
 
     private static boolean isUnique(String name) {
@@ -986,8 +991,10 @@ final class BankClassifier {
                 || name.equals("fancy boots")
                 || name.equals("fancier boots")
                 || name.equals("fighting boots")
-                || name.contains("zombie boots")
-                || name.contains("zombie shirt")
+                || isZombieOutfit(name)
+                || name.startsWith("silly jester ")
+                || name.startsWith("bomber ")
+                || name.contains("camo helmet")
                 || name.contains("butler's uniform")
                 || name.contains("lederhosen")
                 || name.contains("flower crown")
@@ -1003,6 +1010,13 @@ final class BankClassifier {
                 || name.contains("white apron")
                 || name.contains("rainbow")
                 || name.contains("warm gloves");
+    }
+
+    /** Zombie axe is a weapon, so only the outfit pieces count. */
+    private static boolean isZombieOutfit(String name) {
+        return name.startsWith("zombie ") && containsAny(name, new String[]{
+                "shirt", "trousers", "gloves", "boots", "mask"
+        });
     }
 
     private static boolean isEssencePouch(String name) {

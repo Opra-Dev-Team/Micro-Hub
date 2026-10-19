@@ -89,6 +89,67 @@ class BankTabMoverTest {
                 BankTabMover.newTabDynamicIndex(null, 0));
     }
 
+    @Test
+    void scrollCentersSlotAndClampsToContent() {
+        // Window 300 high, content 2000 high, items 32 high.
+        assertEquals(1000 - 134, BankTabMover.scrollYToShow(1000, 32, 300, 2000));
+        assertEquals(0, BankTabMover.scrollYToShow(20, 32, 300, 2000));
+        assertEquals(1700, BankTabMover.scrollYToShow(1980, 32, 300, 2000));
+        assertEquals(0, BankTabMover.scrollYToShow(100, 32, 300, 200));
+    }
+
+    @Test
+    void bothSlotsFramedOnlyWhenTheyFit() {
+        int y = BankTabMover.scrollYToShowBoth(500, 700, 32, 300, 2000);
+        assertTrue(y <= 500 - BankTabMover.ITEM_WINDOW_INSET);
+        assertTrue(y + 300 >= 732 + BankTabMover.ITEM_WINDOW_INSET);
+        assertEquals(-1, BankTabMover.scrollYToShowBoth(100, 1200, 32, 300, 2000));
+    }
+
+    @Test
+    void edgeScrollPutsSlotAgainstTheRequestedEdge() {
+        assertEquals(1000 - 6, BankTabMover.scrollYToEdge(1000, 32, 300, 2000, true));
+        assertEquals(1000 + 32 + 6 - 300, BankTabMover.scrollYToEdge(1000, 32, 300, 2000, false));
+    }
+
+    @Test
+    void itemFlushWithTheWindowEdgesIsInside() {
+        Rectangle window = new Rectangle(100, 200, 400, 500);
+        assertTrue(BankTabMover.fullyInside(window, new Rectangle(151, 200, 36, 32)));
+        assertTrue(BankTabMover.fullyInside(window, new Rectangle(151, 668, 36, 32)));
+        assertFalse(BankTabMover.fullyInside(window, new Rectangle(151, 199, 36, 32)));
+        assertFalse(BankTabMover.fullyInside(window, new Rectangle(151, 669, 36, 32)));
+    }
+
+    @Test
+    void scrollLimitStopsAtTopAndBottom() {
+        assertTrue(BankTabMover.atScrollLimit(0, 300, 2000, -1));
+        assertFalse(BankTabMover.atScrollLimit(0, 300, 2000, 1));
+        assertTrue(BankTabMover.atScrollLimit(1700, 300, 2000, 1));
+        assertFalse(BankTabMover.atScrollLimit(1700, 300, 2000, -1));
+        assertTrue(BankTabMover.atScrollLimit(0, 300, 200, 1));
+        assertFalse(BankTabMover.atScrollLimit(500, 300, 2000, 0));
+    }
+
+    @Test
+    void slotRectFollowsTheContainerScroll() {
+        Rectangle top = BankTabMover.slotRect(100, 80, 0, 0, 48, 36, 36, 32);
+        assertEquals(new Rectangle(148, 116, 36, 32), top);
+        Rectangle scrolled = BankTabMover.slotRect(100, 80, 0, 500, 48, 536, 36, 32);
+        assertEquals(new Rectangle(148, 116, 36, 32), scrolled);
+        Rectangle above = BankTabMover.slotRect(100, 80, 0, 500, 48, 36, 36, 32);
+        assertEquals(80 + 36 - 500, above.y);
+    }
+
+    @Test
+    void scrollDirectionPointsTowardTheHiddenSlot() {
+        Rectangle window = new Rectangle(100, 80, 400, 300);
+        assertEquals(0, BankTabMover.scrollDirection(window, new Rectangle(150, 200, 36, 32)));
+        assertEquals(-1, BankTabMover.scrollDirection(window, new Rectangle(150, 40, 36, 32)));
+        assertEquals(1, BankTabMover.scrollDirection(window, new Rectangle(150, 370, 36, 32)));
+        assertEquals(1, BankTabMover.scrollDirection(window, new Rectangle(150, 2000, 36, 32)));
+    }
+
     /**
      * Live bank tab bar: ten slot backgrounds, then the main icon, then one icon per real tab,
      * then the plus button.

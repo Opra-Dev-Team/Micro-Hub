@@ -1,15 +1,67 @@
 package net.runelite.client.plugins.microbot.banksorter;
 
 import net.runelite.client.config.Config;
+import net.runelite.client.config.ConfigButton;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigInformation;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigSection;
 import net.runelite.client.config.Range;
 
-@ConfigInformation("Open your bank and click Organize. Fast moves an item as soon as the drag lands and does not pause between items. Iron 8-tab is the default layout. Tight iron groups families inside each tab. Clues, teleport jewellery, drinks, leftovers, and raw fish have their own placement settings. Changing a setting moves items on the next Organize. Placeholders are dragged with the real item so the empty slot waits in the right place. Insert mode is turned on automatically.")
+@ConfigInformation("Open your bank, then press Organize bank or Sort open tab below. A plan with the number of moves and an estimated time is shown first. Press Stop, or Esc in game, to stop after the current move. Tabs of any size are sorted with the fewest possible drags and checked when done. Iron 8-tab is the default layout. Tight iron groups families inside each tab. Insert mode and placeholders are turned on automatically. Run logs go to .runelite/bank-sorter, keeping the last 10.")
 @ConfigGroup(BankSorterPlugin.CONFIG)
 public interface BankSorterConfig extends Config {
+
+    @ConfigSection(
+            name = "Controls",
+            description = "Start and stop the sorter. The bank must be open.",
+            position = -1
+    )
+    String controlsSection = "controlsSection";
+
+    @ConfigItem(
+            keyName = BankSorterPlugin.ORGANIZE_BUTTON,
+            name = "Organize bank",
+            description = "Move every item to its home tab, then sort each tab.",
+            position = 0,
+            section = "controlsSection"
+    )
+    default ConfigButton organizeBank() {
+        return new ConfigButton();
+    }
+
+    @ConfigItem(
+            keyName = BankSorterPlugin.SORT_TAB_BUTTON,
+            name = "Sort open tab",
+            description = "Sort only the bank tab that is open now.",
+            position = 1,
+            section = "controlsSection"
+    )
+    default ConfigButton sortOpenTab() {
+        return new ConfigButton();
+    }
+
+    @ConfigItem(
+            keyName = BankSorterPlugin.STOP_BUTTON,
+            name = "Stop",
+            description = "Stop after the current move. Esc in game does the same.",
+            position = 2,
+            section = "controlsSection"
+    )
+    default ConfigButton stopSorting() {
+        return new ConfigButton();
+    }
+
+    @ConfigItem(
+            keyName = "confirmBeforeSorting",
+            name = "Confirm before sorting",
+            description = "Show the plan, move count and estimated time, and wait for OK before any item moves.",
+            position = 3,
+            section = "controlsSection"
+    )
+    default boolean confirmBeforeSorting() {
+        return true;
+    }
 
     @ConfigItem(
             keyName = "speed",
@@ -66,7 +118,7 @@ public interface BankSorterConfig extends Config {
     @ConfigItem(
             keyName = "verboseDebug",
             name = "Verbose debug logs",
-            description = "Write every item to the dump file. The client log still only shows mismatches and drags.",
+            description = "Write every item to the run log in .runelite/bank-sorter. The client log still only shows the summary lines.",
             position = 5
     )
     default boolean verboseDebug() {
@@ -76,7 +128,7 @@ public interface BankSorterConfig extends Config {
     @ConfigItem(
             keyName = "captureScreenshots",
             name = "Capture tab screenshots",
-            description = "After Organize, screenshot each tab into the dump folder.",
+            description = "After a run, screenshot each tab into the run folder in .runelite/bank-sorter.",
             position = 6
     )
     default boolean captureScreenshots() {

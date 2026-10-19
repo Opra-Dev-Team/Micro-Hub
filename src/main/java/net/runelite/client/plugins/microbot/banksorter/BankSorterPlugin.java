@@ -6,23 +6,27 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.events.ClientTick;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
-import net.runelite.client.input.MouseAdapter;
-import net.runelite.client.input.MouseManager;
+import net.runelite.client.events.ConfigChanged;
+import net.runelite.client.input.KeyListener;
+import net.runelite.client.input.KeyManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.microbot.PluginConstants;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
+import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.DrawManager;
 import net.runelite.client.ui.overlay.OverlayManager;
 
 import javax.inject.Inject;
+import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
-import java.awt.Rectangle;
-import java.awt.event.MouseEvent;
+import java.awt.event.KeyEvent;
+import java.lang.reflect.InvocationTargetException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @PluginDescriptor(
         name = PluginConstants.OPRA + "Bank Sorter",
-        description = "Organizes the whole bank into a strict eight-tab iron layout with debug dumps",
+        description = "Organizes the whole bank into a strict eight-tab iron layout and sorts tabs of any size",
         tags = {"bank", "sort", "tab", "opra", "organize"},
         authors = {"Opra Dev Team"},
         version = BankSorterPlugin.version,
@@ -33,14 +37,18 @@ import java.awt.event.MouseEvent;
 @Slf4j
 public class BankSorterPlugin extends Plugin {
     static final String CONFIG = "banksorter";
-    public static final String version = "1.1.9";
+    static final String ORGANIZE_BUTTON = "organizeBank";
+    static final String SORT_TAB_BUTTON = "sortOpenTab";
+    static final String STOP_BUTTON = "stopSorting";
+    private static final String TITLE = "Bank Sorter";
+    public static final String version = "1.2.2";
 
     @Inject
     private OverlayManager overlayManager;
     @Inject
     private BankSorterOverlay overlay;
     @Inject
-    private MouseManager mouseManager;
+    private KeyManager keyManager;
     @Inject
     private BankSorterScript script;
     @Inject
@@ -49,65 +57,41 @@ public class BankSorterPlugin extends Plugin {
     @Getter
     private DrawManager drawManager;
 
-    private Rectangle organizeBounds = new Rectangle();
-    private Rectangle sortBounds = new Rectangle();
-    private Rectangle stopBounds = new Rectangle();
-    @Getter
-    private boolean hoveringOrganize;
-    @Getter
-    private boolean hoveringSort;
-    @Getter
-    private boolean hoveringStop;
-
-    private final MouseAdapter mouseAdapter = new MouseAdapter() {
+    /** Esc is only taken while a run is going, so it still closes the bank otherwise. */
+    private final KeyListener escToStop = new KeyListener() {
         @Override
-        public MouseEvent mousePressed(MouseEvent e) {
-            if (!SwingUtilities.isLeftMouseButton(e)) {
-                return e;
-            }
-            if (stopBounds.contains(e.getPoint()) && script.isBusy()) {
-                log.info("Stop button pressed");
-                script.requestStop();
-                e.consume();
-                return e;
-            }
-            if (script.isBusy()) {
-                return e;
-            }
-            if (organizeBounds.contains(e.getPoint())) {
-                log.info("Organize button pressed");
-                startOrganize();
-                e.consume();
-            } else if (sortBounds.contains(e.getPoint())) {
-                log.info("Sort Tab button pressed");
-                startSortTab();
-                e.consume();
-            }
-            return e;
+        public void keyTyped(KeyEvent e) {
         }
 
         @Override
-        public MouseEvent mouseMoved(MouseEvent e) {
-            hoveringOrganize = organizeBounds.contains(e.getPoint());
-            hoveringSort = sortBounds.contains(e.getPoint());
-            hoveringStop = stopBounds.contains(e.getPoint());
-            return e;
+        public void keyPressed(KeyEvent e) {
+            if (e.getKeyCode() == KeyEvent.VK_ESCAPE && script.isBusy()) {
+                log.info("Esc pressed, stopping bank sorter");
+                script.requestStop("Stopped with Esc");
+                e.consume();
+            }
+        }
+
+        @Override
+        public void keyReleased(KeyEvent e) {
+            if (e.getKeyCode() == KeyEvent.VK_ESCAPE && script.isBusy()) {
+                e.consume();
+            }
         }
     };
 
     @Override
     protected void startUp() {
         overlayManager.add(overlay);
-        // Run before the game and overlay listeners so our bank-title controls
-        // receive and consume the exact click that was rendered.
-        mouseManager.registerMouseListener(0, mouseAdapter);
+        keyManager.registerKeyListener(escToStop);
     }
 
     @Override
     protected void shutDown() {
+        script.requestStop("Plugin turned off");
         script.shutdown();
         overlayManager.remove(overlay);
-        mouseManager.unregisterMouseListener(mouseAdapter);
+        keyManager.unregisterKeyListener(escToStop);
     }
 
     @Provides
@@ -115,35 +99,66 @@ public class BankSorterPlugin extends Plugin {
         return configManager.getConfig(BankSorterConfig.class);
     }
 
-    public void setButtonBounds(Rectangle organize, Rectangle sort, Rectangle stop) {
-        this.organizeBounds = new Rectangle(organize);
-        this.sortBounds = new Rectangle(sort);
-        this.stopBounds = new Rectangle(stop);
-    }
-
     public BankSorterScript script() {
         return script;
     }
 
-    public BankSorterConfig config() {
-        return config;
+    @Subscribe
+    public void onConfigChanged(ConfigChanged event) {
+        if (!CONFIG.equals(event.getGroup()) || event.getKey() == null) {
+            return;
+        }
+        switch (event.getKey()) {
+            case ORGANIZE_BUTTON:
+                log.info("Organize bank pressed");
+                script.organize(config);
+                break;
+            case SORT_TAB_BUTTON:
+                log.info("Sort open tab pressed");
+                script.sortCurrentTab(config);
+                break;
+            case STOP_BUTTON:
+                log.info("Stop pressed");
+                script.requestStop();
+                break;
+            default:
+                break;
+        }
     }
 
-    private void startOrganize() {
-        script.organize(config);
+    /** Blocks the calling script thread until the dialog is answered. */
+    boolean confirmPlan(String plan) {
+        AtomicBoolean ok = new AtomicBoolean(false);
+        try {
+            SwingUtilities.invokeAndWait(() -> ok.set(JOptionPane.showConfirmDialog(
+                    ClientUI.getFrame(),
+                    plan + "\n\nStart now? Esc in game stops after the current move.",
+                    TITLE,
+                    JOptionPane.OK_CANCEL_OPTION,
+                    JOptionPane.INFORMATION_MESSAGE) == JOptionPane.OK_OPTION));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (InvocationTargetException e) {
+            log.error("Bank sorter confirm dialog failed", e);
+            return false;
+        }
+        return ok.get();
     }
 
-    private void startSortTab() {
-        script.sortCurrentTab(config);
+    /** The overlay only shows with the bank open, so problems before that need a dialog. */
+    void tell(String message) {
+        SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(
+                ClientUI.getFrame(), message, TITLE, JOptionPane.INFORMATION_MESSAGE));
     }
 
     @Subscribe
     public void onClientTick(ClientTick event) {
-        if (Rs2Bank.isOpen()) {
-            if (!overlayManager.anyMatch(o -> o == overlay)) {
-                overlayManager.add(overlay);
-            }
-        } else if (overlayManager.anyMatch(o -> o == overlay)) {
+        boolean show = Rs2Bank.isOpen() || script.isBusy();
+        boolean shown = overlayManager.anyMatch(o -> o == overlay);
+        if (show && !shown) {
+            overlayManager.add(overlay);
+        } else if (!show && shown) {
             overlayManager.remove(overlay);
         }
     }

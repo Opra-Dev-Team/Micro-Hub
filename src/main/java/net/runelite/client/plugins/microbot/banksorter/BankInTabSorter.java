@@ -1,12 +1,14 @@
 package net.runelite.client.plugins.microbot.banksorter;
 
-import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
-import java.awt.Rectangle;
+
 import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 final class BankInTabSorter {
@@ -37,119 +39,221 @@ final class BankInTabSorter {
         return finalSorted;
     }
 
-    static boolean alreadyInOrder(List<BankSortItem> current, List<BankSortItem> sorted) {
-        if (current.size() != sorted.size()) {
-            return false;
+    private static final int MAX_KEY_ATTEMPTS = 3;
+
+    /**
+     * Keys for the planner. Sortable items use their id. Slots the sorter does not sort, like
+     * bank fillers, get unique negative keys by order and stay at the end of the tab.
+     */
+    static final class TabKeys {
+        final List<Integer> current;
+        final List<Integer> desired;
+
+        TabKeys(List<Integer> current, List<Integer> desired) {
+            this.current = current;
+            this.desired = desired;
         }
-        for (int i = 0; i < current.size(); i++) {
-            if (current.get(i).getId() != sorted.get(i).getId()) {
-                return false;
-            }
-        }
-        return true;
     }
 
-    static boolean rearrange(List<BankSortItem> sortedItems, List<Integer> targetSlots, BankSorterScript script) {
-        if (sortedItems.isEmpty() || sortedItems.size() != targetSlots.size()) {
-            return true;
-        }
-        for (int i = 0; i < sortedItems.size(); i++) {
-            if (script.isStopRequested()) {
-                return false;
-            }
-            if (!Rs2Bank.isOpen()) {
-                return false;
-            }
-            BankSortItem desired = sortedItems.get(i);
-            int targetSlot = targetSlots.get(i);
-            if (itemIdAtSlot(targetSlot) == desired.getId()) {
-                continue;
-            }
-            if (!moveDesiredToSlot(desired, targetSlot, sortedItems, targetSlots, i)) {
-                script.recordFailure();
+    static TabKeys buildKeys(int[] liveIds, List<Integer> sortedIds) {
+        Set<Integer> sortable = new HashSet<>(sortedIds);
+        Set<Integer> seen = new HashSet<>();
+        List<Integer> current = new ArrayList<>(liveIds.length);
+        List<Integer> extras = new ArrayList<>();
+        int other = 0;
+        for (int id : liveIds) {
+            if (sortable.contains(id) && seen.add(id)) {
+                current.add(id);
             } else {
-                script.recordMove();
-            }
-            script.pauseAfterMove();
-        }
-        return true;
-    }
-
-    private static boolean moveDesiredToSlot(BankSortItem desired, int targetSlot,
-                                             List<BankSortItem> sortedItems, List<Integer> targetSlots, int relative) {
-        for (int attempt = 0; attempt < 2; attempt++) {
-            int sourceSlot = findSourceSlot(desired, sortedItems, targetSlots, relative);
-            if (sourceSlot < 0) {
-                continue;
-            }
-            if (sourceSlot == targetSlot) {
-                return true;
-            }
-            if (!revealSlot(sourceSlot, desired.getId())) {
-                continue;
-            }
-            Rectangle from = itemBounds(sourceSlot, desired.getId());
-            Rectangle to = itemBounds(targetSlot, -1);
-            if (from == null || to == null) {
-                continue;
-            }
-            BankTabMover.dragBankItem(sourceSlot, from, to);
-            boolean ok = BankTabMover.waitUntil(() ->
-                    itemIdAtSlot(targetSlot) == desired.getId(), 4000);
-            if (ok) {
-                return true;
+                int key = -(++other);
+                current.add(key);
+                extras.add(key);
             }
         }
-        return false;
+        List<Integer> desired = new ArrayList<>(current.size());
+        for (int id : sortedIds) {
+            if (seen.contains(id)) {
+                desired.add(id);
+            }
+        }
+        desired.addAll(extras);
+        return new TabKeys(current, desired);
     }
 
-    private static int findSourceSlot(BankSortItem desired, List<BankSortItem> sortedItems,
-                                      List<Integer> targetSlots, int relative) {
-        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
-            int fallback = -1;
-            for (net.runelite.api.widgets.Widget widget : Rs2Bank.getItems()) {
-                if (widget.getItemId() != desired.getId() || widget.isHidden()) {
+    /** Insert moves still needed to sort the live tab. */
+    static int movesNeeded(int tab, List<BankSortItem> sorted) {
+        int[] range = BankTabMover.tabRange(tab);
+        TabKeys keys = buildKeys(BankTabMover.containerIds(range[0], range[1]), ids(sorted));
+        return BankSortPlanner.movesNeeded(keys.current, keys.desired);
+    }
+
+    /**
+     * Plans the fewest moves from the live tab, does the first one, then plans again from
+     * the live tab. Re-planning after every move doubles as verify and repair: a drag that
+     * landed wrong is simply part of the next plan. An item that fails {@value #MAX_KEY_ATTEMPTS}
+     * times is pinned where it is and the rest of the tab is still sorted around it.
+     *
+     * @return true when the tab ended in sorted order
+     */
+    static boolean rearrange(int tab, List<BankSortItem> sorted, BankSorterScript script, BankOrganiserDebug debug) {
+        List<Integer> sortedIds = ids(sorted);
+        Map<Integer, String> names = new HashMap<>();
+        for (BankSortItem item : sorted) {
+            names.put(item.getId(), item.getOriginalName());
+        }
+        Map<Integer, Integer> attempts = new HashMap<>();
+        Map<Integer, String> pinned = new LinkedHashMap<>();
+        int initial = -1;
+        int budget = Integer.MAX_VALUE;
+        int steps = 0;
+        int moved = 0;
+        int humanRetries = 0;
+        boolean retriedPinned = false;
+        Map<Integer, Integer> staleRetries = new HashMap<>();
+        while (true) {
+            if (script.isStopRequested() || !Rs2Bank.isOpen() || !script.waitForHandsOff()) {
+                return false;
+            }
+            if (Rs2Bank.getCurrentTab() != tab && !BankTabMover.openTab(tab)) {
+                debug.info("Tab " + tab + " could not be reopened");
+                script.recordFailure();
+                return false;
+            }
+            int[] range = BankTabMover.tabRange(tab);
+            int[] liveIds = BankTabMover.containerIds(range[0], range[1]);
+            TabKeys keys = buildKeys(liveIds, sortedIds);
+            List<BankSortPlanner.Move> plan = BankSortPlanner.plan(
+                    without(keys.current, pinned.keySet()), without(keys.desired, pinned.keySet()));
+            if (initial < 0) {
+                initial = plan.size();
+                budget = initial * 2 + 20;
+                script.planStage(plan.size());
+                debug.info("Tab " + tab + " plan: " + plan.size() + " moves for " + keys.current.size() + " slots");
+            } else {
+                script.replan(plan.size());
+            }
+            if (plan.isEmpty()) {
+                if (pinned.isEmpty()) {
+                    debug.info("Tab " + tab + " sorted and verified");
+                    return true;
+                }
+                if (!retriedPinned) {
+                    retriedPinned = true;
+                    debug.info("Tab " + tab + ": retrying " + pinned.size() + " skipped item(s) once");
+                    for (Integer key : pinned.keySet()) {
+                        attempts.put(key, MAX_KEY_ATTEMPTS - 1);
+                    }
+                    pinned.clear();
                     continue;
                 }
-                int slot = widget.getIndex();
-                int rel = targetSlots.indexOf(slot);
-                boolean alreadyCorrect = rel >= 0 && rel < relative
-                        && sortedItems.get(rel).getId() == desired.getId();
-                if (alreadyCorrect) {
+                debug.info("Tab " + tab + ": " + moved + " of " + (moved + pinned.size()) + " moved, skipped "
+                        + describePinned(pinned, names));
+                for (int i = 0; i < pinned.size(); i++) {
+                    script.recordFailure();
+                }
+                return false;
+            }
+            if (steps >= budget) {
+                debug.info("Tab " + tab + " stopped after " + budget + " steps without converging ("
+                        + plan.size() + " moves left)");
+                script.recordFailure();
+                return false;
+            }
+            steps++;
+
+            BankSortPlanner.Move move = toLive(keys.current, pinned.keySet(), plan.get(0));
+            int itemId = liveIds[move.from];
+            String name = names.getOrDefault(itemId, String.valueOf(itemId));
+            if (BankTabMover.itemIdAtSlot(range[0] + move.from) != itemId) {
+                BankTabMover.awaitSync(range[0] + move.from);
+                if (BankTabMover.containerIdAt(range[0] + move.from) != itemId) {
                     continue;
                 }
-                if (slot == desired.getOriginalIndex()) {
-                    return slot;
-                }
-                if (fallback < 0) {
-                    fallback = slot;
-                }
             }
-            return fallback;
-        }).orElse(-1);
-    }
-
-    private static int itemIdAtSlot(int slot) {
-        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
-            net.runelite.api.widgets.Widget item = Rs2Bank.getItemWidget(slot);
-            return item == null || item.isHidden() ? -1 : item.getItemId();
-        }).orElse(-1);
-    }
-
-    private static Rectangle itemBounds(int slot, int expectedItemId) {
-        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
-            net.runelite.api.widgets.Widget item = Rs2Bank.getItemWidget(slot);
-            if (item == null || item.isHidden()
-                    || (expectedItemId >= 0 && item.getItemId() != expectedItemId)) {
-                return null;
+            long started = System.currentTimeMillis();
+            BankTabMover.MoveOutcome outcome = BankTabMover.moveWithinTab(
+                    range[0] + move.from, itemId, range[0] + move.to);
+            long ms = System.currentTimeMillis() - started;
+            debug.trace(String.format("MOVE tab=%d %s from=%d to=%d %s %s %dms",
+                    tab, name, move.from, move.to, outcome.ok() ? "OK" : "FAIL", outcome, ms));
+            if (outcome.ok()) {
+                moved++;
+                attempts.remove(move.key);
+                script.recordMove(ms);
+                script.pauseAfterMove();
+                continue;
             }
-            Rectangle bounds = item.getBounds();
-            return bounds == null ? null : new Rectangle(bounds);
-        }).orElse(null);
+            if (outcome.humanInput() && humanRetries < MAX_HUMAN_RETRIES) {
+                humanRetries++;
+                steps--;
+                continue;
+            }
+            if (BankTabMover.REASON_SOURCE_MOVED.equals(outcome.reason)
+                    && staleRetries.merge(move.key, 1, Integer::sum) <= MAX_KEY_ATTEMPTS) {
+                BankTabMover.awaitSync(range[0] + move.from);
+                steps--;
+                continue;
+            }
+            int tries = attempts.merge(move.key, 1, Integer::sum);
+            if (tries >= MAX_KEY_ATTEMPTS) {
+                pinned.put(move.key, outcome.reason);
+                debug.info("Tab " + tab + ": skipping " + name + " after " + tries + " tries (" + outcome.reason + ")");
+            }
+        }
     }
 
-    private static boolean revealSlot(int slot, int itemId) {
-        return BankTabMover.revealSlot(slot, itemId);
+    private static final int MAX_HUMAN_RETRIES = 20;
+
+    private static String describePinned(Map<Integer, String> pinned, Map<Integer, String> names) {
+        List<String> parts = new ArrayList<>();
+        for (Map.Entry<Integer, String> entry : pinned.entrySet()) {
+            parts.add(names.getOrDefault(entry.getKey(), String.valueOf(entry.getKey())) + " (" + entry.getValue() + ")");
+        }
+        return String.join(", ", parts);
+    }
+
+    static List<Integer> without(List<Integer> keys, Set<Integer> pinned) {
+        if (pinned.isEmpty()) {
+            return keys;
+        }
+        List<Integer> out = new ArrayList<>(keys.size());
+        for (Integer key : keys) {
+            if (!pinned.contains(key)) {
+                out.add(key);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Turns a move planned with the pinned keys left out into a move on the live tab. The item
+     * goes right after the key it follows in the plan, or right before the first one, so pinned
+     * items are never dragged and the planned order of everything else holds.
+     */
+    static BankSortPlanner.Move toLive(List<Integer> live, Set<Integer> pinned, BankSortPlanner.Move move) {
+        if (pinned.isEmpty()) {
+            return move;
+        }
+        List<Integer> rest = without(live, pinned);
+        rest = new ArrayList<>(rest);
+        rest.remove(Integer.valueOf(move.key));
+        List<Integer> liveRest = new ArrayList<>(live);
+        liveRest.remove(Integer.valueOf(move.key));
+        int to;
+        if (move.to == 0) {
+            to = rest.isEmpty() ? 0 : liveRest.indexOf(rest.get(0));
+        } else {
+            to = liveRest.indexOf(rest.get(move.to - 1)) + 1;
+        }
+        return new BankSortPlanner.Move(move.key, live.indexOf(move.key), to);
+    }
+
+    private static List<Integer> ids(List<BankSortItem> items) {
+        List<Integer> ids = new ArrayList<>(items.size());
+        for (BankSortItem item : items) {
+            ids.add(item.getId());
+        }
+        return ids;
     }
 
     private static int compareSpecial(BankSortItem a, BankSortItem b) {
